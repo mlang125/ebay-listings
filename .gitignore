@@ -1,0 +1,11 @@
+# Account-specific settings (template: .env.example)
+.env
+
+# Personal data: item photos, drafts and the tote inventory
+inbox/
+batches/
+inventory.csv
+
+__pycache__/
+*.pyc
+.DS_Store
