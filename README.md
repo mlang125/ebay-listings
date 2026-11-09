@@ -3,7 +3,15 @@
 Turns a zip of item photos into live eBay listings through eBay's own Sell APIs,
 and keeps track of which tote each item is stored in.
 
-Python 3.9, standard library only. Nothing to install.
+Python 3.12 with a virtualenv. One-time setup:
+
+```sh
+/opt/homebrew/bin/python3.12 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+cp .env.example .env    # then fill it in
+```
+
+Run commands with `.venv/bin/python cli.py ...` (or `source .venv/bin/activate` first, then `python cli.py ...`).
 
 ## The workflow
 
@@ -13,24 +21,37 @@ Python 3.9, standard library only. Nothing to install.
    whiteboard are ignored.
 2. **Zip the photos**, one zip per tote, and put the zip in `inbox/` (for example `inbox/batch1.zip`).
 3. **Have Claude draft the batch.** Give Claude the zip and the tote ID (`<letter><number>`, e.g. `T1`).
-   Claude splits the photos at each divider and assigns SKUs (`MV-#####`, the next free
-   number in `inventory.csv`). It writes `batches/<batch>/drafts.json` and copies the
+   Claude splits the photos at each divider and assigns SKUs (`MV-#####`, from `cli.py next-sku`). It writes `batches/<batch>/drafts.json` and copies the
    listing photos into `batches/<batch>/photos/`.
-4. **Price check:** `python3 cli.py comps <batch>` (see [Pricing](#pricing)).
+4. **Price check:** `cli.py comps <batch>` (see [Pricing](#pricing)).
 5. **Review** `drafts.json`: titles, condition, price, and anything listed under `needs_check`.
-6. **Publish:** `python3 cli.py publish <batch> [SKU ...]`. Each published item is
-   added to `inventory.csv` with its tote.
+6. **Publish:** `cli.py publish <batch> [SKU ...]`. Each published item is
+   recorded in the database with its tote and listing, and the event log says who listed it.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `python3 cli.py login` | One-time browser sign-in. Stores the refresh token in the macOS Keychain (lasts about 18 months). |
-| `python3 cli.py check` | Confirms the token works and shows the account's selling status. |
-| `python3 cli.py setup` | Creates the ship-from location. In sandbox it also creates the business policies. Safe to re-run. |
-| `python3 cli.py comps <batch> [SKU ...]` | Price estimate from active listings plus a sold-search link for each unpublished draft. |
-| `python3 cli.py sold <batch> <SKU> <file.json>` | Saves sold prices read from eBay's website into the draft. |
-| `python3 cli.py publish <batch> [SKU ...]` | Publishes drafts: all of them, or only the SKUs given. |
+| `cli.py login` | One-time browser sign-in. Stores the refresh token in the macOS Keychain (lasts about 18 months). |
+| `cli.py check` | Confirms the token works and shows the account's selling status. |
+| `cli.py setup` | Creates the ship-from location. In sandbox it also creates the business policies. Safe to re-run. |
+| `cli.py comps <batch> [SKU ...]` | Price estimate from active listings plus a sold-search link for each unpublished draft. |
+| `cli.py sold <batch> <SKU> <file.json>` | Saves sold prices read from eBay's website into the draft. |
+| `cli.py publish <batch> [SKU ...]` | Publishes drafts: all of them, or only the SKUs given. |
+| `cli.py import` | Loads `batches/*/drafts.json` and the old `inventory.csv` into the database. Safe to re-run. |
+| `cli.py sync [DAYS]` | Pulls eBay orders (default: last 90 days) and updates statuses: sold, shipped, cancelled. |
+| `cli.py picklist [DAYS]` | Sold, unshipped items grouped by tote. `DAYS` limits it to orders due within N days (0 = today). |
+| `cli.py items [STATUS]` | Lists items, optionally only one status (`PENDING`, `LISTED`, ...). |
+| `cli.py history <SKU>` | Shows an item's event log: what happened, when, and who did it. |
+| `cli.py tote <CODE>` | Lists what's in a tote or place. |
+| `cli.py move <TOTE> <SKU> [SKU ...]` | Puts items in a tote and logs the move. |
+| `cli.py merge <FROM> <TO>` | Moves everything in one tote into another. |
+| `cli.py import-tracking <sheet> <active> "<last binned title>"` | Matches active listings to the tote-tracking sheet. |
+| `cli.py import-listings <report>` | Condition, category, quantity and price from Seller Hub's All listings report. |
+| `cli.py import-orders <report> [sheet "<title>"]` | Orders and sold items from Seller Hub's Orders report. Buyer details aren't stored. |
+| `cli.py next-sku` | Prints the next free `MV-#####`. |
+| `cli.py export <file.csv>` | Writes SKU, status, tote, price, title and listing ID to a CSV. |
+| `cli.py user add <name> [role]` / `user list` | Manages users (roles: admin, lister, shipper). |
 
 `publish` skips drafts that have a `skip` field or are already published in the
 current environment, so re-running it is safe.
@@ -87,10 +108,31 @@ collectibles or anything whose price depends on the maker.
 
 The price is always your call. The estimate is a starting point.
 
-## inventory.csv
+## Database
 
-One row per published item: `sku, tote, title, price, listing_id, offer_id, env, batch, listed_at`.
-To move or merge totes, edit the `tote` column.
+SQLite file at `data/ebay.db` (change with `DB_PATH` in `.env`). Code: `ebay/db.py`.
+
+- **items**: one row per physical item (SKU), with its status, tote, price and cost.
+  A cost of NULL means *unknown*, not zero.
+- **events**: append-only log of everything that happens to an item: created, listed,
+  status changes. Each event records the actor (`cli`, `sync`, `auto`, `import`) and the user.
+  `CLI_USER` in `.env` sets who `cli.py` records as the user.
+- **locations**: totes (`<letter><number>`) and two places that aren't totes: `OT` other
+  (plush bin, house closet, storage, ...) and `UN` not binned yet. An empty location means unknown
+  (e.g. sold before the tracking sheet existed). Totes get consolidated often, so an item's
+  location is just its latest one; every move is in the event log (`move`, `merge`).
+- **listings**, **batches**, **locations** (totes now; shelves and racks later),
+  **users**, **orders** and **order_lines** (filled by the order sync, coming next).
+
+Statuses: `PENDING → LISTED → BOUGHT → LABEL_PRINTED → PACKAGED → SENT_TO_POST_OFFICE → DELIVERED`,
+plus `SKIPPED`, `ENDED`, `CANCELLED` and `RETURNED`. Status changes go through `db.set_status()`,
+which always writes an event.
+
+Schema changes are numbered migrations in `db.MIGRATIONS` and run automatically on connect.
+Never edit a migration that has already run; add a new one.
+
+`inventory.csv` is the old tote list from before the database. `cli.py import` reads it,
+and nothing writes to it any more.
 
 ## Configuration
 
@@ -135,7 +177,9 @@ ebay/auth.py        OAuth sign-in and token refresh
 ebay/api.py         REST helper (auth and marketplace headers, errors)
 ebay/setup.py       ship-from location (+ policies in sandbox)
 ebay/media.py       photo upload (Media API)
-ebay/listings.py    inventory item -> offer -> publish, inventory.csv
+ebay/listings.py    inventory item -> offer -> publish, records the listing in the database
+ebay/db.py          database schema, migrations, items, events, SKUs
+ebay/importer.py    loads existing drafts and the old inventory.csv into the database
 ebay/comps.py       price estimate and sold-comp storage
 ebay/sold_extract.js  browser script that reads an eBay sold-search page
 ```

@@ -1,15 +1,9 @@
 """Publish reviewed drafts: photos -> inventory item -> offer -> live listing."""
 
-import csv
-import datetime
 import json
 import os
 
-from . import api, config, media
-
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-INVENTORY_CSV = os.path.join(ROOT, "inventory.csv")
-CSV_FIELDS = ["sku", "tote", "title", "price", "listing_id", "offer_id", "env", "batch", "listed_at"]
+from . import api, config, db, media
 
 
 def policy_ids():
@@ -92,13 +86,21 @@ def _upsert_offer(item, policies):
     return api.call("POST", "/sell/inventory/v1/offer", body)["offerId"]
 
 
-def _append_inventory(row):
-    new_file = not os.path.exists(INVENTORY_CSV)
-    with open(INVENTORY_CSV, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_FIELDS)
-        if new_file:
-            writer.writeheader()
-        writer.writerow(row)
+def _record(conn, drafts, item, listing_id, offer_id, listed_at, user):
+    with conn:
+        db.upsert_item(
+            conn,
+            item["sku"],
+            "LISTED",
+            "cli",
+            user,
+            title=item["title"],
+            condition=item["condition"],
+            price=item["price"],
+            batch_id=db.batch_id(conn, drafts["batch"], drafts["tote"], drafts.get("source_zip")),
+            location_id=db.location_id(conn, drafts["tote"]),
+        )
+        db.record_listing(conn, item["sku"], config.ENV, listing_id, offer_id, item["price"], listed_at, "cli", user)
 
 
 def publish(batch_dir, skus=None):
@@ -106,6 +108,8 @@ def publish(batch_dir, skus=None):
     with open(drafts_path) as f:
         drafts = json.load(f)
     policies = policy_ids()
+    conn = db.connect()
+    user = db.user_id(conn, config.CLI_USER)
 
     for item in drafts["items"]:
         if skus and item["sku"] not in skus:
@@ -126,21 +130,9 @@ def publish(batch_dir, skus=None):
         listing_id = api.call("POST", "/sell/inventory/v1/offer/%s/publish" % offer_id)["listingId"]
         print("%s: published as listing %s" % (item["sku"], listing_id))
 
-        now = datetime.datetime.now().isoformat(timespec="seconds")
+        now = db.now()
         published[config.ENV] = {"listing_id": listing_id, "offer_id": offer_id, "listed_at": now}
         item["published"] = published
         with open(drafts_path, "w") as f:
             json.dump(drafts, f, indent=2)
-        _append_inventory(
-            {
-                "sku": item["sku"],
-                "tote": drafts["tote"],
-                "title": item["title"],
-                "price": "%.2f" % item["price"],
-                "listing_id": listing_id,
-                "offer_id": offer_id,
-                "env": config.ENV,
-                "batch": drafts["batch"],
-                "listed_at": now,
-            }
-        )
+        _record(conn, drafts, item, listing_id, offer_id, now, user)

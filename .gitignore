@@ -5,7 +5,12 @@
 inbox/
 batches/
 inventory.csv
+data/
 
+.venv/
 __pycache__/
 *.pyc
 .DS_Store
+
+# eBay CSV downloads and exports (business data)
+*.csv

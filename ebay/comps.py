@@ -7,7 +7,6 @@ Two sources:
     restricted). Claude reads those pages in Chrome and saves them with record_sold().
 """
 
-import csv
 import datetime
 import json
 import os
@@ -15,7 +14,7 @@ import re
 import statistics
 import urllib.parse
 
-from . import api
+from . import api, db
 
 # Inventory API condition -> whether comps should look at new or used items.
 NEW_CONDITIONS = {"NEW", "LIKE_NEW", "NEW_OTHER", "NEW_WITH_DEFECTS"}
@@ -60,15 +59,6 @@ def _has_word(title, word):
     return re.search(r"\b%s\b" % re.escape(word.lower()), title.lower()) is not None
 
 
-def _own_listing_ids():
-    """Listing IDs we've published (from inventory.csv), so our own listings aren't comps."""
-    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "inventory.csv")
-    if not os.path.exists(path):
-        return set()
-    with open(path) as f:
-        return {row["listing_id"] for row in csv.DictReader(f)}
-
-
 def estimate(item, listings):
     """Price estimate from active listings, without sold data.
 
@@ -83,7 +73,7 @@ def estimate(item, listings):
     # Only for a hand-written comp_query; the full title is too specific to require.
     required = [w for w in re.findall(r"[\w'-]+", item.get("comp_query", "")) if len(w) >= 3]
     exclude = item.get("comp_exclude", [])
-    own = _own_listing_ids()
+    own = db.own_listing_ids(db.connect())
     prices = sorted(
         l["price"]
         for l in listings

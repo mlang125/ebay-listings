@@ -31,6 +31,11 @@ def _env(key):
         raise SystemExit("%s is not set in %s (see .env.example)." % (key, ENV_FILE))
     return _ENV_VALUES[key]
 
+ROOT = os.path.dirname(ENV_FILE)
+DB_PATH = os.path.join(ROOT, _ENV_VALUES.get("DB_PATH") or "data/ebay.db")
+# Who `cli.py` records as doing things (a name from `cli.py user list`); optional.
+CLI_USER = _ENV_VALUES.get("CLI_USER") or None
+
 
 ENV = "production"  # or "sandbox" for testing
 
