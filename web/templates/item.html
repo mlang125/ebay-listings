@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}{{ row.sku }}{% endblock %}
+{% block body %}
+<h1>{{ row.sku }} <span class="tag">{{ row.status }}</span>
+  {% if row.missing_since %}<span class="tag needs-work">missing since {{ row.missing_since[:10] }}</span>{% endif %}</h1>
+<p class="lead">{{ row.title }}</p>
+<table class="compact">
+  <tr><td>Tote</td><td>{% if row.tote %}<a href="{{ url_for('tote', code=row.tote) }}">{{ row.tote }}</a>{% else %}unknown{% endif %}</td></tr>
+  <tr><td>Price</td><td>{{ money(row.price) }}</td></tr>
+  <tr><td>Condition</td><td>{{ row.condition or '' }}</td></tr>
+  <tr><td>Category</td><td>{{ row.category or '' }}</td></tr>
+  {% if row.notes %}<tr><td>Notes</td><td>{{ row.notes }}</td></tr>{% endif %}
+  {% for l in listings %}
+  <tr><td>Listing</td><td><a href="https://www.ebay.com/itm/{{ l.listing_id }}" target="_blank">{{ l.listing_id }}</a> {{ l.env if l.env != 'production' else '' }} listed {{ l.listed_at[:10] }}</td></tr>
+  {% endfor %}
+  {% if row.relisted_as %}<tr><td>Relisted as</td><td><a href="{{ url_for('item', sku=row.relisted_as) }}">{{ row.relisted_as }}</a></td></tr>{% endif %}
+  {% for r in relist_of %}<tr><td>Relist of</td><td><a href="{{ url_for('item', sku=r.sku) }}">{{ r.sku }}</a></td></tr>{% endfor %}
+  {% for s in sales %}
+  <tr><td>Sold</td><td>{{ s.created_at[:10] }} for {{ money(s.line_price) }}, order {{ s.order_id }} ({{ s.status }}{% if s.ship_by %}, ship by {{ s.ship_by }}{% endif %})</td></tr>
+  {% endfor %}
+</table>
+
+<form method="post" class="card row">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label>Move to tote <input name="tote" placeholder="e.g. A3, OT" size="6" autocapitalize="characters"></label>
+  <label>Set status
+    <select name="status">{% for s in statuses %}<option {% if s == row.status %}selected{% endif %}>{{ s }}</option>{% endfor %}</select></label>
+  <label class="grow">Note (why) <input name="note"></label>
+  {% if row.status in relistable and not row.relisted_as %}
+  <label>Relisted as <input name="relisted_as" placeholder="MV-#####" size="9" autocapitalize="characters"></label>
+  {% endif %}
+  <button>Save</button>
+</form>
+<form method="post" action="{{ url_for('item_missing', sku=row.sku) }}" class="inline">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  {% if row.missing_since %}
+    <input type="hidden" name="missing" value="0"><button>Found it</button>
+  {% else %}
+    <input type="hidden" name="missing" value="1"><button>Mark missing from {{ row.tote or 'its tote' }}</button>
+  {% endif %}
+</form>
+
+<h2>History</h2>
+<table>
+  <tr><th>When</th><th>What</th><th>Who</th><th>Details</th></tr>
+  {% for e in events %}
+  {% set d = parse_json(e.data) %}
+  <tr>
+    <td class="nowrap">{{ e.at.replace('T', ' ')[:16] }}</td>
+    <td>{{ e.action }}{% if e.to_status %}: {{ e.from_status or '' }} → {{ e.to_status }}{% endif %}</td>
+    <td>{{ e.user or e.actor }}</td>
+    <td class="muted small">{% if d %}{% for k, v in d.items() if v is not none %}{{ k }}: {{ v|join(', ') if v is iterable and v is not string else v }}{% if not loop.last %}; {% endif %}{% endfor %}{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

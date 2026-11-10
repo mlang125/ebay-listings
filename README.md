@@ -21,12 +21,58 @@ Run commands with `.venv/bin/python cli.py ...` (or `source .venv/bin/activate` 
    whiteboard are ignored.
 2. **Zip the photos**, one zip per tote, and put the zip in `inbox/` (for example `inbox/batch1.zip`).
 3. **Have Claude draft the batch.** Give Claude the zip and the tote ID (`<letter><number>`, e.g. `T1`).
-   Claude splits the photos at each divider and assigns SKUs (`MV-#####`, from `cli.py next-sku`). It writes `batches/<batch>/drafts.json` and copies the
-   listing photos into `batches/<batch>/photos/`.
-4. **Price check:** `cli.py comps <batch>` (see [Pricing](#pricing)).
-5. **Review** `drafts.json`: titles, condition, price, and anything listed under `needs_check`.
+   Claude splits the photos at each divider and assigns SKUs (`MV-#####`, from `cli.py next-sku`). It writes `batches/<batch>/drafts.json`, copies the
+   listing photos into `batches/<batch>/photos/`, and loads the drafts into the database with `cli.py import-drafts <batch>`.
+4. **Price check:** `cli.py comps <batch>`, or *Update estimate* on the website (see [Pricing](#pricing)).
+5. **Review** in the web app: titles, condition, price, and anything listed under `needs_check`.
 6. **Publish:** `cli.py publish <batch> [SKU ...]`. Each published item is
    recorded in the database with its tote and listing, and the event log says who listed it.
+
+## Web app
+
+```sh
+.venv/bin/python cli.py user add <name> lister   # once per person (roles: admin, lister, shipper)
+.venv/bin/python cli.py user password <name>     # sets their web password; type it in your own terminal
+.venv/bin/python cli.py serve                    # http://127.0.0.1:5050 on this Mac
+.venv/bin/python cli.py serve --lan              # also reachable from phones/laptops on the home wifi
+```
+
+Pages:
+
+- **Drafts:** each batch's drafts with their photos and state (*needs work*, *ready*, *published*,
+  *skipped*). The editor covers title, price, condition, description, item specifics, package size,
+  comp search words and open questions. A draft can't be published while it still has open questions
+  (`needs_check`), so delete each question once it's settled. *Update estimate* re-runs `comps` for that draft.
+  *Publish N ready* publishes every ready draft in the batch. Edits and publishes are logged under the signed-in person.
+- **Items:** search by SKU or title, filter by status. An item's page shows its listings, sales and full
+  history, and lets you move it to another tote or set its status by hand (with a note).
+- **Totes:** what's on hand in each tote, and the next free tote ID.
+  - *Combine totes* (e.g. B4 + C6): everything goes into the next free ID (say A5), into one of
+    the totes (keeping its label), or into an ID you type. Only on-hand items move; shipped items keep
+    their old tote as history. A tote is free once nothing in it is on hand.
+  - *Split a tote:* on its page, type where each item goes (MV-1 and MV-4 to T1, MV-3 to T2, ...)
+    and press Move. Blank means it stays.
+  - *Put items in*: type SKUs to move them into this tote.
+- **Pick list:** sold, unshipped items grouped by tote, with a *Print* layout. *Get new orders from eBay*
+  runs the order sync. *Label printed* and *Packed* mark progress for us; eBay only shows "shipped" to the buyer.
+
+- **Relists:** cancelled and returned items, with suggested links to the SKU each was relisted under
+  (same title on a newer listing). Tick and save, or link one by hand from the item's page.
+- **Sales:** item sales, shipping paid by buyers, average sale, sell-through, cancellations, by month and by
+  price, plus what's listed now and for how long.
+- **Activity:** everything that happened, newest first, filterable by person, action and SKU/tote, plus a
+  30-day count per person (listed, edited, moved, labels, packed).
+
+**Missing items.** An item is where the records say until someone presses *Missing* (on the tote or item
+page). It keeps its tote, gets a "missing" tag everywhere including the pick list, and *Found* clears it.
+*I checked this tote* records who went through a tote and when; it's never required.
+
+**Who did what.** Every change is recorded in the event log with the person who made it: sign-ins, draft
+edits, publishes, comps, moves, combines, splits, missing/found, tote checks, status changes, order syncs
+and imports. On the command line that's `CLI_USER` from `.env`; commands that change anything refuse to run
+without it. Two people editing the same draft can't overwrite each other: the second save is refused and shows who saved first.
+The session-signing key is created in `data/web_secret_key` on first run.
+`--lan` serves plain HTTP, so use it only on your own wifi. Port 5050 avoids macOS AirPlay, which uses 5000.
 
 ## Commands
 
@@ -36,29 +82,39 @@ Run commands with `.venv/bin/python cli.py ...` (or `source .venv/bin/activate` 
 | `cli.py check` | Confirms the token works and shows the account's selling status. |
 | `cli.py setup` | Creates the ship-from location. In sandbox it also creates the business policies. Safe to re-run. |
 | `cli.py comps <batch> [SKU ...]` | Price estimate from active listings plus a sold-search link for each unpublished draft. |
-| `cli.py sold <batch> <SKU> <file.json>` | Saves sold prices read from eBay's website into the draft. |
+| `cli.py sold <SKU> <file.json>` | Saves sold prices read from eBay's website on the draft. |
 | `cli.py publish <batch> [SKU ...]` | Publishes drafts: all of them, or only the SKUs given. |
-| `cli.py import` | Loads `batches/*/drafts.json` and the old `inventory.csv` into the database. Safe to re-run. |
-| `cli.py sync [DAYS]` | Pulls eBay orders (default: last 90 days) and updates statuses: sold, shipped, cancelled. |
+| `cli.py import-drafts [batch ...]` | Loads new drafts from `batches/<batch>/drafts.json` into the database. Drafts already loaded are left alone, so edits are never overwritten. |
+| `cli.py export-drafts <batch> <file>` | Writes a batch's drafts, as stored now, to a JSON file. |
+| `cli.py import` | Loads new drafts from every batch and the old `inventory.csv`. Safe to re-run. |
+| `cli.py sync [DAYS]` | Pulls eBay orders (default: last 90 days; the API goes back further, so `sync 365` gets everything) and updates statuses: sold, shipped, cancelled. An item sold more than once follows its latest order. |
 | `cli.py picklist [DAYS]` | Sold, unshipped items grouped by tote. `DAYS` limits it to orders due within N days (0 = today). |
 | `cli.py items [STATUS]` | Lists items, optionally only one status (`PENDING`, `LISTED`, ...). |
 | `cli.py history <SKU>` | Shows an item's event log: what happened, when, and who did it. |
-| `cli.py tote <CODE>` | Lists what's in a tote or place. |
+| `cli.py tote <CODE>` | Lists what's on hand in a tote or place. |
 | `cli.py move <TOTE> <SKU> [SKU ...]` | Puts items in a tote and logs the move. |
-| `cli.py merge <FROM> <TO>` | Moves everything in one tote into another. |
+| `cli.py merge <FROM> <TO>` | Moves everything on hand in one tote into another. |
+| `cli.py consolidate <TOTE> <TOTE> [...] [--into CODE]` | Combines totes, into the next free ID unless `--into` says otherwise. |
+| `cli.py free-tote` | Prints the next free tote ID (A1 to Z9). |
+| `cli.py missing <SKU> ...` / `found <SKU> ...` | Marks items missing from their tote, or found again. |
+| `cli.py relists` | Cancelled/returned items: suggested relist links and what's not relisted. `--link` saves the suggestions; `relists <OLD> <NEW>` links one. |
+| `cli.py sales` | Sales numbers by month. |
 | `cli.py import-tracking <sheet> <active> "<last binned title>"` | Matches active listings to the tote-tracking sheet. |
 | `cli.py import-listings <report>` | Condition, category, quantity and price from Seller Hub's All listings report. |
-| `cli.py import-orders <report> [sheet "<title>"]` | Orders and sold items from Seller Hub's Orders report. Buyer details aren't stored. |
+| `cli.py import-orders <report> [sheet "<title>"]` | Orders and sold items from Seller Hub's Orders report. Buyer details aren't stored. Safe to re-run: orders already in the database keep their status. Run `sync 365` after it to pick up cancellations, which the report doesn't show. |
 | `cli.py next-sku` | Prints the next free `MV-#####`. |
 | `cli.py export <file.csv>` | Writes SKU, status, tote, price, title and listing ID to a CSV. |
 | `cli.py user add <name> [role]` / `user list` | Manages users (roles: admin, lister, shipper). |
+| `cli.py user password <name>` | Sets a user's web password. |
+| `cli.py serve [--lan]` | Starts the web app (see [Web app](#web-app)). |
 
 `publish` skips drafts that have a `skip` field or are already published in the
 current environment, so re-running it is safe.
 
 ## drafts.json
 
-One file per batch: `{"batch", "tote", "source_zip", "items": [...]}`. Each item has:
+How Claude hands a new batch over (then `cli.py import-drafts <batch>`). After that the draft lives in the
+database's `drafts` table, one JSON document per SKU in the same shape. One file per batch: `{"batch", "tote", "source_zip", "items": [...]}`. Each item has:
 
 | Field | Notes |
 |---|---|
@@ -85,7 +141,7 @@ fixed-price listings in the same category and condition group (new or used), the
 
 1. keeps only titles that contain every word of `comp_query` that's 3+ letters long
    (eBay's search is loose) and none of the words in `comp_exclude`;
-2. drops your own listings (found through `inventory.csv`);
+2. drops your own listings (found through the database);
 3. drops outliers under ⅓ or over 3× the median;
 4. reports the **30th percentile** as the estimate, with a 20th–50th percentile range.
    Asking prices run higher than sale prices, so the estimate sits below the median.
@@ -121,8 +177,10 @@ SQLite file at `data/ebay.db` (change with `DB_PATH` in `.env`). Code: `ebay/db.
   (plush bin, house closet, storage, ...) and `UN` not binned yet. An empty location means unknown
   (e.g. sold before the tracking sheet existed). Totes get consolidated often, so an item's
   location is just its latest one; every move is in the event log (`move`, `merge`).
+- **drafts**: unpublished (and published) drafts, one JSON document per SKU, with a version number
+  so concurrent edits are caught. Code: `ebay/drafts.py`.
 - **listings**, **batches**, **locations** (totes now; shelves and racks later),
-  **users**, **orders** and **order_lines** (filled by the order sync, coming next).
+  **users**, **orders** and **order_lines** (filled by the order sync).
 
 Statuses: `PENDING → LISTED → BOUGHT → LABEL_PRINTED → PACKAGED → SENT_TO_POST_OFFICE → DELIVERED`,
 plus `SKIPPED`, `ENDED`, `CANCELLED` and `RETURNED`. Status changes go through `db.set_status()`,
@@ -182,6 +240,10 @@ ebay/db.py          database schema, migrations, items, events, SKUs
 ebay/importer.py    loads existing drafts and the old inventory.csv into the database
 ebay/comps.py       price estimate and sold-comp storage
 ebay/sold_extract.js  browser script that reads an eBay sold-search page
+ebay/orders.py      order sync (Fulfillment API) and the pick list
+ebay/drafts.py      drafts in the database: load, save (with edit conflicts), import/export drafts.json
+ebay/sales.py       sales numbers
+web/                Flask web app: routes in __init__.py, templates/, static/
 ```
 
 ## eBay quirks worth knowing

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Items{% endblock %}
+{% block body %}
+<h1>Items</h1>
+<form class="filters">
+  <input name="q" value="{{ q }}" placeholder="SKU or words in the title" autofocus>
+  <select name="status">
+    <option value="">Any status</option>
+    {% for s in statuses %}<option {% if s == status %}selected{% endif %}>{{ s }}</option>{% endfor %}
+    <option value="MISSING" {% if status == 'MISSING' %}selected{% endif %}>Marked missing</option>
+  </select>
+  <button>Search</button>
+</form>
+<table>
+  <tr><th>SKU</th><th>Status</th><th>Tote</th><th class="num">Price</th><th>Title</th></tr>
+  {% for r in rows %}
+  <tr>
+    <td><a href="{{ url_for('item', sku=r.sku) }}">{{ r.sku }}</a></td>
+    <td>{{ r.status }}{% if r.missing_since %} <span class="tag needs-work">missing</span>{% endif %}</td>
+    <td>{% if r.tote %}<a href="{{ url_for('tote', code=r.tote) }}">{{ r.tote }}</a>{% else %}<span class="muted">?</span>{% endif %}</td>
+    <td class="num">{{ money(r.price) }}</td>
+    <td>{{ r.title }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="5" class="muted">No items match.</td></tr>
+  {% endfor %}
+</table>
+{% if more %}<p class="muted">Showing the first 300. Narrow the search to see the rest.</p>{% endif %}
+{% endblock %}

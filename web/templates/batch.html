@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}{{ batch }}{% endblock %}
+{% block body %}
+<div class="head">
+  <h1>{{ batch }} <span class="muted">tote {{ drafts.tote }}</span></h1>
+  {% set ready = rows|selectattr('state', 'equalto', 'ready')|list %}
+  {% if ready %}
+  <form method="post" action="{{ url_for('batch_publish', batch=batch) }}"
+        onsubmit="return confirm('Publish {{ ready|length }} listing(s) live on eBay?')">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="primary">Publish {{ ready|length }} ready</button>
+  </form>
+  {% endif %}
+</div>
+<div class="drafts">
+  {% for r in rows %}
+  <a class="draft-row" href="{{ url_for('draft', batch=batch, sku=r.item.sku) }}">
+    {% if r.item.photos %}<img src="{{ url_for('photo', batch=batch, filename=r.item.photos[0]) }}" alt="" loading="lazy">{% else %}<span class="noimg"></span>{% endif %}
+    <span class="draft-main">
+      <span class="sku">{{ r.item.sku }}</span>
+      <span class="tag {{ r.state|replace(' ', '-') }}">{{ r.state }}</span>
+      <span class="title">{{ r.item.title }}</span>
+      {% if r.state == 'needs work' %}<span class="problems">{{ r.problems|join(' · ') }}</span>{% endif %}
+      {% if r.state == 'skipped' %}<span class="muted">{{ r.item.skip }}</span>{% endif %}
+    </span>
+    <span class="price">{{ money(r.item.price) }}</span>
+  </a>
+  {% endfor %}
+</div>
+{% endblock %}

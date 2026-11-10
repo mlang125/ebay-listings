@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Totes{% endblock %}
+{% block body %}
+<h1>Totes</h1>
+<div class="grid">
+  <form class="card" onsubmit="location.href='{{ url_for('totes') }}/' + this.code.value.trim().toUpperCase(); return false;">
+    <label>Open a tote <input name="code" placeholder="e.g. A3" autocapitalize="characters" required></label>
+    <button>Open</button>
+  </form>
+  <form class="card" action="{{ url_for('consolidate') }}">
+    <label>Combine totes <span class="muted">two or more, e.g. B4 C6</span>
+      <input name="codes" placeholder="B4 C6" autocapitalize="characters" required></label>
+    <button>Next</button>
+  </form>
+  <div class="card">
+    <p>Next free tote ID: <strong>{{ suggestion }}</strong></p>
+    <p class="muted small">A tote counts as free once nothing in it is still on hand (shipped items keep their old tote in the history only).</p>
+  </div>
+</div>
+<table>
+  <tr><th>Tote</th><th class="num">Listed</th><th class="num">Not listed</th><th class="num">To ship</th><th class="num">Missing</th><th>Checked</th><th></th></tr>
+  {% for r in rows %}
+  {% set n = (r.listed or 0) + (r.unlisted or 0) + (r.to_ship or 0) %}
+  <tr class="{{ '' if n else 'muted' }}">
+    <td><a href="{{ url_for('tote', code=r.code) }}">{{ r.code }}</a>{% if not n %} <span class="muted small">empty</span>{% endif %}</td>
+    <td class="num">{{ r.listed or 0 }}</td><td class="num">{{ r.unlisted or 0 }}</td><td class="num">{{ r.to_ship or 0 }}</td>
+    <td class="num">{{ r.missing or '' }}</td><td class="small">{{ (r.checked_at or '')[:10] }}</td>
+    <td class="muted small">{{ r.notes or '' }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

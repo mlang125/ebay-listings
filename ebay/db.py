@@ -136,6 +136,26 @@ MIGRATIONS = [
     ALTER TABLE order_lines ADD COLUMN tracking TEXT;
     ALTER TABLE order_lines ADD COLUMN promoted INTEGER;
     """,
+    """
+    ALTER TABLE users ADD COLUMN password_hash TEXT;  -- for the web app; NULL means no web login
+    """,
+    """
+    -- A listing being prepared. `data` is the draft as JSON (title, description, aspects,
+    -- photos, package, comps, needs_check, ...); see ebay/drafts.py.
+    CREATE TABLE drafts (
+        sku TEXT PRIMARY KEY REFERENCES items(sku),
+        batch_id INTEGER NOT NULL REFERENCES batches(id),
+        position INTEGER NOT NULL DEFAULT 0,
+        data TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1,  -- bumped on every save, so two editors can't overwrite each other
+        updated_at TEXT NOT NULL,
+        updated_by INTEGER REFERENCES users(id)
+    );
+    CREATE INDEX drafts_batch ON drafts (batch_id, position);
+    ALTER TABLE items ADD COLUMN missing_since TEXT;  -- set when someone marks it missing from its tote
+    ALTER TABLE items ADD COLUMN relisted_as TEXT REFERENCES items(sku);  -- the SKU it was relisted under
+    ALTER TABLE locations ADD COLUMN checked_at TEXT;  -- last time someone checked the tote's contents
+    """,
 ]
 
 
@@ -174,6 +194,13 @@ def user_id(conn, name):
 def add_user(conn, name, role="admin"):
     with conn:
         conn.execute("INSERT INTO users (name, role, created_at) VALUES (?, ?, ?)", (name, role, now()))
+
+
+def set_password(conn, name, password):
+    from werkzeug.security import generate_password_hash
+
+    with conn:
+        conn.execute("UPDATE users SET password_hash = ? WHERE name = ?", (generate_password_hash(password), name))
 
 
 # Places that aren't numbered totes (see the locations table).
@@ -265,14 +292,139 @@ def move(conn, sku, code, actor, user=None):
     log_event(conn, "item", sku, "moved", actor, user, data={"from": row["code"], "to": code})
 
 
+# Statuses of items that have left the building. Their location stays as history, but
+# they don't count as being in a tote (and moves leave them alone).
+GONE = ("SENT_TO_POST_OFFICE", "DELIVERED")
+
+TOTE_CODE_RE = re.compile(r"^[A-Z]\d+$")
+
+
+def check_code(code):
+    """Normalise a tote or place code, or stop with a message if it isn't one."""
+    code = (code or "").strip().upper()
+    if not (TOTE_CODE_RE.match(code) or code in PLACES):
+        raise ValueError("%r isn't a tote code (a letter then a number, like A3) or one of %s" % (code, ", ".join(PLACES)))
+    return code
+
+
+def on_hand(conn, code):
+    """SKUs physically in a tote or place."""
+    return [r["sku"] for r in conn.execute(
+        "SELECT i.sku FROM items i JOIN locations l ON l.id = i.location_id"
+        " WHERE l.code = ? AND i.status NOT IN (?, ?) ORDER BY i.sku", (code, *GONE))]
+
+
+def totes_in_use(conn):
+    return {r["code"] for r in conn.execute(
+        "SELECT DISTINCT l.code FROM locations l JOIN items i ON i.location_id = l.id WHERE i.status NOT IN (?, ?)", GONE)}
+
+
+def suggest_tote(conn, freeing=()):
+    """The first free code from A1 to Z9, counting the totes in `freeing` as free (they're being emptied)."""
+    used = totes_in_use(conn) - set(freeing)
+    for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+        for n in range(1, 10):
+            if letter + str(n) not in used:
+                return letter + str(n)
+    return None
+
+
 def merge(conn, from_code, to_code, actor, user=None):
-    """Move everything in one tote into another ("moved X2 into A3"). Returns the count."""
-    skus = [r["sku"] for r in conn.execute(
-        "SELECT i.sku FROM items i JOIN locations l ON l.id = i.location_id WHERE l.code = ?", (from_code,))]
-    for sku in skus:
-        move(conn, sku, to_code, actor, user)
-    log_event(conn, "location", from_code, "merged", actor, user, data={"into": to_code, "items": len(skus)})
-    return len(skus)
+    """Move everything on hand in one tote into another ("moved X2 into A3"). Returns the count."""
+    return consolidate(conn, [from_code], to_code, actor, user)
+
+
+def consolidate(conn, codes, into, actor, user=None):
+    """Combine totes: move what's on hand in each of `codes` into `into`. Returns the count."""
+    moved = 0
+    for code in codes:
+        if code == into:
+            continue
+        skus = on_hand(conn, code)
+        for sku in skus:
+            move(conn, sku, into, actor, user)
+        moved += len(skus)
+        log_event(conn, "location", code, "merged", actor, user, data={"into": into, "items": len(skus)})
+    return moved
+
+
+def split(conn, from_code, plan, actor, user=None):
+    """Send items from one tote to several: plan is {sku: code}. Stops before moving anything if a SKU isn't in the tote."""
+    here = set(on_hand(conn, from_code))
+    strays = sorted(set(plan) - here)
+    if strays:
+        raise ValueError("Not in %s: %s" % (from_code, ", ".join(strays)))
+    for sku, code in sorted(plan.items()):
+        move(conn, sku, code, actor, user)
+    log_event(conn, "location", from_code, "split", actor, user,
+              data={"to": sorted(set(plan.values())), "items": len(plan)})
+
+
+def set_missing(conn, sku, missing, actor, user=None, note=None):
+    """Flag an item as missing from its tote (or found again). Its tote stays as it was."""
+    row = conn.execute("SELECT missing_since FROM items WHERE sku = ?", (sku,)).fetchone()
+    if row is None:
+        raise ValueError("Unknown SKU %s" % sku)
+    if bool(row["missing_since"]) == missing:
+        return
+    conn.execute("UPDATE items SET missing_since = ?, updated_at = ? WHERE sku = ?", (now() if missing else None, now(), sku))
+    log_event(conn, "item", sku, "missing" if missing else "found", actor, user, data={"note": note} if note else None)
+
+
+def mark_checked(conn, code, actor, user=None):
+    """Record that someone went through a tote."""
+    conn.execute("UPDATE locations SET checked_at = ? WHERE code = ?", (now(), code))
+    log_event(conn, "location", code, "checked", actor, user, data={
+        "on_hand": len(on_hand(conn, code)),
+        "missing": conn.execute(
+            "SELECT COUNT(*) FROM items i JOIN locations l ON l.id = i.location_id"
+            " WHERE l.code = ? AND i.missing_since IS NOT NULL AND i.status NOT IN (?, ?)", (code, *GONE)).fetchone()[0],
+    })
+
+
+# Items that came back to us unsold and may need listing again.
+RELISTABLE = ("CANCELLED", "RETURNED", "ENDED")
+
+
+def link_relist(conn, old, new, actor, user=None):
+    """Record that `old` (cancelled, returned or ended) was relisted as `new`."""
+    for sku in (old, new):
+        if not conn.execute("SELECT 1 FROM items WHERE sku = ?", (sku,)).fetchone():
+            raise ValueError("Unknown SKU %s" % sku)
+    if old == new:
+        raise ValueError("An item can't be relisted as itself")
+    conn.execute("UPDATE items SET relisted_as = ?, updated_at = ? WHERE sku = ?", (new, now(), old))
+    log_event(conn, "item", old, "relisted_as", actor, user, data={"sku": new})
+    log_event(conn, "item", new, "relist_of", actor, user, data={"sku": old})
+
+
+def suggest_relists(conn):
+    """(old, new) pairs: a relistable item and the one other item with the same title on a newer listing.
+
+    eBay listing IDs only go up, so "newer" means a higher listing ID. When several old
+    items point at the same new one (e.g. three cancellations, then one sale), it's
+    left for a person to decide.
+    """
+    def latest_listing(sku):
+        ids = [int(r[0]) for r in conn.execute("SELECT listing_id FROM listings WHERE sku = ?", (sku,)) if r[0].isdigit()]
+        return max(ids, default=None)
+
+    pairs = []
+    olds = conn.execute(
+        "SELECT sku, title FROM items WHERE status IN (?, ?, ?) AND relisted_as IS NULL AND title IS NOT NULL", RELISTABLE
+    ).fetchall()
+    for old in olds:
+        old_listing = latest_listing(old["sku"])
+        matches = [r["sku"] for r in conn.execute(
+            "SELECT i.sku FROM items i WHERE lower(trim(i.title)) = lower(trim(?)) AND i.sku <> ?"
+            " AND i.status NOT IN (?, ?, ?, 'PENDING', 'SKIPPED')"
+            " AND NOT EXISTS (SELECT 1 FROM items o WHERE o.relisted_as = i.sku)",
+            (old["title"], old["sku"], *RELISTABLE),
+        ) if old_listing and (latest_listing(r["sku"]) or 0) > old_listing]
+        if len(matches) == 1:
+            pairs.append((old["sku"], matches[0]))
+    targets = [new for _, new in pairs]
+    return [(old, new) for old, new in pairs if targets.count(new) == 1]
 
 
 def own_listing_ids(conn):

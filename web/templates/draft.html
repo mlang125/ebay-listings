@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}{{ item.sku }}{% endblock %}
+{% block body %}
+<div class="head">
+  <h1>{{ item.sku }} <span class="tag {{ state|replace(' ', '-') }}">{{ state }}</span></h1>
+  <span class="pager">
+    <a href="{{ url_for('batch', batch=batch) }}">{{ batch }}</a>
+    {% if prev_sku %}<a href="{{ url_for('draft', batch=batch, sku=prev_sku) }}">← {{ prev_sku }}</a>{% endif %}
+    {% if next_sku %}<a href="{{ url_for('draft', batch=batch, sku=next_sku) }}">{{ next_sku }} →</a>{% endif %}
+  </span>
+</div>
+
+<div class="photos">
+  {% for p in item.photos %}
+  <a href="{{ url_for('photo', batch=batch, filename=p) }}" target="_blank"><img src="{{ url_for('photo', batch=batch, filename=p) }}" alt="photo {{ loop.index }}"></a>
+  {% endfor %}
+</div>
+{% if item.whiteboard_notes %}<p class="muted">Whiteboard: {{ item.whiteboard_notes }}</p>{% endif %}
+
+{% if published %}
+<div class="card">
+  <p>Published as listing <a href="https://www.ebay.com/itm/{{ published.listing_id }}" target="_blank">{{ published.listing_id }}</a> on {{ published.listed_at[:10] }}.
+     Change it on eBay from now on. <a href="{{ url_for('item', sku=item.sku) }}">Item history</a></p>
+</div>
+{% endif %}
+
+{% if state == 'skipped' %}
+<div class="card warnbox"><strong>Not being listed:</strong> {{ item.skip }}
+  <p class="muted">To list it after all, empty "Don't list" at the bottom and save.</p></div>
+{% elif problems and not published %}
+<div class="card warnbox">
+  <strong>Before publishing:</strong>
+  <ul>{% for p in problems %}<li>{{ p }}</li>{% endfor %}</ul>
+  <p class="muted">Answer each open question, then delete it from the list at the bottom of the form.</p>
+</div>
+{% endif %}
+
+<form method="post" class="editor">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input type="hidden" name="version" value="{{ item._version }}">
+  <fieldset {% if published %}disabled{% endif %}>
+  <label>Title <span class="muted counter" data-for="title">{{ item.title|length }}/{{ title_max }}</span>
+    <input name="title" id="title" value="{{ item.title }}" maxlength="{{ title_max }}" required></label>
+
+  <div class="row">
+    <label>Price ($) <input name="price" value="{{ '%.2f'|format(item.price) if item.price is not none else '' }}" inputmode="decimal" required></label>
+    <label>Condition
+      <select name="condition">
+        {% for value, label in conditions %}<option value="{{ value }}" {% if value == item.condition %}selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select></label>
+  </div>
+
+  <div class="card comps">
+    {% set est = item.comps.estimate if item.comps else none %}
+    {% if est and est.count %}
+      <p><strong>Estimate {{ money(est.price) }}</strong> (range {{ money(est.range[0]) }}–{{ money(est.range[1]) }},
+         {{ est.count }} similar listings, {{ est.confidence }} confidence, checked {{ est.checked }})</p>
+    {% elif est %}
+      <p>No similar listings found (checked {{ est.checked }}). Try a shorter search below.</p>
+    {% else %}
+      <p class="muted">No price estimate yet.</p>
+    {% endif %}
+    {% if item.comps and item.comps.sold %}
+      <p>Sold: {{ item.comps.sold.count }}, median {{ money(item.comps.sold.median) }} ({{ money(item.comps.sold.low) }}–{{ money(item.comps.sold.high) }}), checked {{ item.comps.sold.checked }}</p>
+    {% endif %}
+    {% if item.price_note %}<p class="muted">Note: {{ item.price_note }}</p>{% endif %}
+    <label>Search words for comps <input name="comp_query" value="{{ item.comp_query or '' }}" placeholder="{{ item.title }}"></label>
+    <p class="actions">
+      <button formaction="{{ url_for('draft_comps', batch=batch, sku=item.sku) }}" {% if published %}disabled{% endif %}>Update estimate</button>
+      {% if item.comps and item.comps.sold_url %}<a href="{{ item.comps.sold_url }}" target="_blank">Sold listings on eBay ↗</a>{% endif %}
+    </p>
+    <p class="muted small">"Update estimate" uses the saved search words; press Save first if you changed them.</p>
+  </div>
+
+  <label>Condition notes <textarea name="condition_description" rows="2">{{ item.condition_description or '' }}</textarea></label>
+  <label>Description <textarea name="description" rows="8">{{ item.description or '' }}</textarea></label>
+
+  <div class="row">
+    <label>Category ID <input name="category_id" value="{{ item.category_id or '' }}"></label>
+    <p class="muted grow">{{ item.category or '' }}</p>
+  </div>
+
+  <label>Item specifics <span class="muted">one per line, "Name: value"; separate several values with |</span>
+    <textarea name="aspects" rows="{{ [aspects_text.count('\n') + 2, 4]|max }}">{{ aspects_text }}</textarea></label>
+
+  <div class="row">
+    <label>Weight (oz) <input name="weight_oz" value="{{ item.package.weight_oz if item.package else '' }}" inputmode="decimal"></label>
+    <label>Length (in) <input name="length_in" value="{{ item.package.length_in if item.package else '' }}" inputmode="decimal"></label>
+    <label>Width (in) <input name="width_in" value="{{ item.package.width_in if item.package else '' }}" inputmode="decimal"></label>
+    <label>Height (in) <input name="height_in" value="{{ item.package.height_in if item.package else '' }}" inputmode="decimal"></label>
+  </div>
+
+  <label>Open questions <span class="muted">one per line; delete a line once it's settled</span>
+    <textarea name="needs_check" rows="3">{{ (item.needs_check or [])|join('\n') }}</textarea></label>
+
+  <label>Don't list (reason) <input name="skip" value="{{ item.skip or '' }}" placeholder="leave empty to list it"></label>
+
+  <p class="actions">
+    <button class="primary" name="then" value="save">Save</button>
+    <button name="then" value="publish" onclick="return confirm('Save and publish {{ item.sku }} live on eBay?')">Save and publish</button>
+  </p>
+  </fieldset>
+</form>
+<script>
+  document.querySelectorAll('.counter').forEach(function (c) {
+    var input = document.getElementById(c.dataset.for);
+    input.addEventListener('input', function () { c.textContent = input.value.length + '/{{ title_max }}'; });
+  });
+</script>
+{% endblock %}

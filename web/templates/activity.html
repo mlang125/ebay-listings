@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Activity{% endblock %}
+{% block body %}
+<h1>Activity</h1>
+<h2>Last 30 days by person</h2>
+<table>
+  <tr><th>Who</th><th class="num">Listed</th><th class="num">Draft edits</th><th class="num">Items moved</th><th class="num">Labels</th><th class="num">Packed</th><th class="num">Other</th></tr>
+  {% for name, c in people %}
+  <tr><td><a href="{{ url_for('activity', who=name) }}">{{ name }}</a></td>
+    <td class="num">{{ c.listed }}</td><td class="num">{{ c.edited }}</td><td class="num">{{ c.moved }}</td>
+    <td class="num">{{ c.labels }}</td><td class="num">{{ c.packed }}</td><td class="num">{{ c.other }}</td></tr>
+  {% endfor %}
+</table>
+<p class="muted small">"(no user)" is the imports and order syncs run before everything was signed.</p>
+
+<h2>Everything, newest first</h2>
+<form class="filters">
+  <select name="who"><option value="">Anyone</option>
+    {% for u in users %}<option {% if u == who %}selected{% endif %}>{{ u }}</option>{% endfor %}
+    <option value="(none)" {% if who == '(none)' %}selected{% endif %}>(no user)</option></select>
+  <select name="action"><option value="">Any action</option>
+    {% for a in actions %}<option {% if a == action %}selected{% endif %}>{{ a }}</option>{% endfor %}</select>
+  <input name="q" value="{{ q }}" placeholder="SKU or tote">
+  <button>Filter</button>
+</form>
+<table>
+  <tr><th>When</th><th>Who</th><th>What</th><th>On</th><th>Details</th></tr>
+  {% for e in rows %}
+  {% set d = parse_json(e.data) %}
+  <tr>
+    <td class="nowrap">{{ e.at.replace('T', ' ')[:16] }}</td>
+    <td>{{ e.user or ('(' + e.actor + ')') }}</td>
+    <td>{{ e.action|replace('_', ' ') }}{% if e.to_status %}: {{ e.from_status or '' }} → {{ e.to_status }}{% endif %}</td>
+    <td class="nowrap">{% if e.entity == 'item' %}<a href="{{ url_for('item', sku=e.entity_id) }}">{{ e.entity_id }}</a>
+        {% elif e.entity == 'location' %}<a href="{{ url_for('tote', code=e.entity_id) }}">{{ e.entity_id }}</a>
+        {% else %}{{ e.entity }} {{ e.entity_id }}{% endif %}</td>
+    <td class="muted small">{% if d %}{% for k, v in d.items() if v is not none %}{{ k }}: {{ v|join(', ') if v is iterable and v is not string else v }}{% if not loop.last %}; {% endif %}{% endfor %}{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+<p class="pager">
+  {% if page > 1 %}<a href="{{ url_for('activity', who=who, action=action, q=q, page=page - 1) }}">← Newer</a>{% endif %}
+  {% if more %}<a href="{{ url_for('activity', who=who, action=action, q=q, page=page + 1) }}">Older →</a>{% endif %}
+</p>
+{% endblock %}

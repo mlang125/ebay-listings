@@ -138,7 +138,16 @@ So someone other than me can take a tote from photos to live listings.
 
 - [ ] **New batch:** choose a tote, then upload photos from a phone or laptop (or drop in a zip).
       The divider-photo convention stays the same.
-- [ ] **Drafts live in the database.** Claude Code (terminal) writes them there for now;
+- [x] **Web app** (`cli.py serve`): sign-in per person, drafts review queue with photos, editor,
+      price estimate, publish (single or all ready), items search and history, totes with move/merge,
+      printable pick list with *Label printed* / *Packed*, and a button for the order sync.
+- [x] **Tote tools:** combine totes (into the next free ID, one of them, or a custom ID) and split a
+      tote across several; only on-hand items move. All past orders imported (May 2026 on).
+- [x] **Drafts live in the database** (`drafts` table, JSON per SKU, versioned). Claude still hands a batch
+      over as `drafts.json`, loaded with `cli.py import-drafts`.
+- [x] **Every change records who made it** (web sign-in or `CLI_USER`), with an Activity page.
+- [x] Relist links for cancelled/returned items; *Missing*/*Found* flags and optional tote checks.
+- [x] Sales numbers page (`/sales`, `cli.py sales`). Days-to-sell waits for reliable listing dates. Claude Code (terminal) writes them there for now;
       the GUI never depends on how a draft was produced.
 - [ ] **API drafter (when it's worth it):** the app splits the photos, sends each item to the
       Claude API, and stores the draft, including its `needs_check` questions, comp query, and

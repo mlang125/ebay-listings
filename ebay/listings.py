@@ -1,9 +1,8 @@
 """Publish reviewed drafts: photos -> inventory item -> offer -> live listing."""
 
-import json
 import os
 
-from . import api, config, db, media
+from . import api, config, db, drafts, media
 
 
 def policy_ids():
@@ -86,53 +85,49 @@ def _upsert_offer(item, policies):
     return api.call("POST", "/sell/inventory/v1/offer", body)["offerId"]
 
 
-def _record(conn, drafts, item, listing_id, offer_id, listed_at, user):
+def _record(conn, drafts_, item, listing_id, offer_id, listed_at, user, actor):
     with conn:
+        item["published"] = dict(item.get("published", {}), **{config.ENV: {"listing_id": listing_id, "offer_id": offer_id, "listed_at": listed_at}})
+        drafts.save(conn, item, actor, user)
         db.upsert_item(
             conn,
             item["sku"],
             "LISTED",
-            "cli",
+            actor,
             user,
             title=item["title"],
             condition=item["condition"],
             price=item["price"],
-            batch_id=db.batch_id(conn, drafts["batch"], drafts["tote"], drafts.get("source_zip")),
-            location_id=db.location_id(conn, drafts["tote"]),
+            batch_id=db.batch_id(conn, drafts_["batch"], drafts_["tote"], drafts_.get("source_zip")),
+            location_id=db.location_id(conn, drafts_["tote"]),
         )
-        db.record_listing(conn, item["sku"], config.ENV, listing_id, offer_id, item["price"], listed_at, "cli", user)
+        db.record_listing(conn, item["sku"], config.ENV, listing_id, offer_id, item["price"], listed_at, actor, user)
 
 
-def publish(batch_dir, skus=None):
-    drafts_path = os.path.join(batch_dir, "drafts.json")
-    with open(drafts_path) as f:
-        drafts = json.load(f)
+def publish(conn, batch, skus=None, user=None, actor="cli", log=print):
+    """Publish a batch's drafts (all, or only `skus`). `user` is who's publishing; messages go to `log`."""
+    drafts_ = drafts.load(conn, batch)
+    if drafts_ is None:
+        raise SystemExit("No drafts in batch %s. Load them with: cli.py import-drafts %s" % (batch, batch))
     policies = policy_ids()
-    conn = db.connect()
-    user = db.user_id(conn, config.CLI_USER)
+    photos = drafts.photos_dir(batch)
 
-    for item in drafts["items"]:
+    for item in drafts_["items"]:
         if skus and item["sku"] not in skus:
             continue
         if item.get("skip"):
-            print("%s skipped: %s" % (item["sku"], item["skip"]))
+            log("%s skipped: %s" % (item["sku"], item["skip"]))
             continue
         published = item.get("published", {})
         if published.get(config.ENV):
-            print("%s already published in %s (listing %s); skipping" % (item["sku"], config.ENV, published[config.ENV]["listing_id"]))
+            log("%s already published in %s (listing %s); skipping" % (item["sku"], config.ENV, published[config.ENV]["listing_id"]))
             continue
 
-        print("%s: uploading %d photos" % (item["sku"], len(item["photos"])))
-        image_urls = [media.upload_image(os.path.join(batch_dir, "photos", p)) for p in item["photos"]]
+        log("%s: uploading %d photos" % (item["sku"], len(item["photos"])))
+        image_urls = [media.upload_image(os.path.join(photos, p)) for p in item["photos"]]
 
         api.call("PUT", "/sell/inventory/v1/inventory_item/" + item["sku"], _inventory_item(item, image_urls))
         offer_id = _upsert_offer(item, policies)
         listing_id = api.call("POST", "/sell/inventory/v1/offer/%s/publish" % offer_id)["listingId"]
-        print("%s: published as listing %s" % (item["sku"], listing_id))
-
-        now = db.now()
-        published[config.ENV] = {"listing_id": listing_id, "offer_id": offer_id, "listed_at": now}
-        item["published"] = published
-        with open(drafts_path, "w") as f:
-            json.dump(drafts, f, indent=2)
-        _record(conn, drafts, item, listing_id, offer_id, now, user)
+        log("%s: published as listing %s" % (item["sku"], listing_id))
+        _record(conn, drafts_, item, listing_id, offer_id, db.now(), user, actor)

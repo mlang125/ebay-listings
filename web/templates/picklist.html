@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Pick list {{ today }}{% endblock %}
+{% block body %}
+<div class="head noprint">
+  <h1>Pick list</h1>
+  <form class="filters">
+    <select name="days" onchange="this.form.submit()">
+      <option value="" {% if not days %}selected{% endif %}>Everything unshipped</option>
+      <option value="0" {% if days == '0' %}selected{% endif %}>Due today or overdue</option>
+      <option value="1" {% if days == '1' %}selected{% endif %}>Due by tomorrow</option>
+      <option value="3" {% if days == '3' %}selected{% endif %}>Due within 3 days</option>
+    </select>
+  </form>
+  <form method="post" action="{{ url_for('sync') }}" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="back" value="{{ request.full_path }}">
+    <button>Get new orders from eBay</button>
+  </form>
+  <button onclick="window.print()" class="primary">Print</button>
+</div>
+<p class="muted noprint">Orders last checked {{ (last_sync or 'never').replace('T', ' ')[:16] }}. Statuses here are only for us; buyers see "shipped" once the label's tracking is on eBay.</p>
+
+<div class="print-head">
+  <strong>Pick list</strong> · {{ count }} item{{ '' if count == 1 else 's' }} · printed {{ printed }}{% if days %} · due within {{ days }} day(s){% endif %}
+</div>
+
+{% for tote, rows in groups %}
+<section class="pick-group">
+  <h2>{{ tote or 'Location unknown' }} <span class="muted">{{ rows|length }}</span></h2>
+  <table class="pick">
+    {% for r in rows %}
+    <tr class="{{ 'overdue' if r.ship_by and r.ship_by < today else '' }}">
+      <td class="box">☐</td>
+      <td class="nowrap"><strong>{{ r.sku }}</strong>{% if r.missing_since %} <span class="tag needs-work">missing</span>{% endif %}</td>
+      <td>{{ r.title }}</td>
+      <td class="nowrap">ship by {{ r.ship_by or '?' }}</td>
+      <td class="nowrap small">order {{ r.order_id }}</td>
+      <td class="nowrap noprint">
+        <span class="tag">{{ r.status|replace('_', ' ')|lower }}</span>
+        {% for s, label in [('LABEL_PRINTED', 'Label printed'), ('PACKAGED', 'Packed')] %}
+          {% if r.status != s %}
+          <form method="post" action="{{ url_for('picklist_status') }}" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="sku" value="{{ r.sku }}">
+            <input type="hidden" name="status" value="{{ s }}"><input type="hidden" name="days" value="{{ days }}">
+            <button class="small">{{ label }}</button>
+          </form>
+          {% endif %}
+        {% endfor %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</section>
+{% else %}
+<p>Nothing to ship.</p>
+{% endfor %}
+{% endblock %}

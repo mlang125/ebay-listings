@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}eBay listings{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% if g.user %}
+  <nav class="top">
+    <a href="{{ url_for('home') }}" class="brand">Listings</a>
+    <a href="{{ url_for('drafts_index') }}">Drafts</a>
+    <a href="{{ url_for('items') }}">Items</a>
+    <a href="{{ url_for('totes') }}">Totes</a>
+    <a href="{{ url_for('picklist') }}">Pick list</a>
+    <a href="{{ url_for('relists') }}">Relists</a>
+    <a href="{{ url_for('sales_page') }}">Sales</a>
+    <a href="{{ url_for('activity') }}">Activity</a>
+    <span class="spacer"></span>
+    {% if env != 'production' %}<span class="tag warn">{{ env }}</span>{% endif %}
+    <span class="who">{{ g.user.name }}</span>
+    <form method="post" action="{{ url_for('logout') }}" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="link">Sign out</button>
+    </form>
+  </nav>
+  {% endif %}
+  <main>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+      <ul class="flashes">
+        {% for cat, m in messages %}<li class="{{ cat }}">{{ m }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+    {% endwith %}
+    {% block body %}{% endblock %}
+  </main>
+</body>
+</html>

@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Drafts{% endblock %}
+{% block body %}
+<h1>Drafts</h1>
+<table>
+  <tr><th>Batch</th><th>Tote</th><th class="num">Ready</th><th class="num">Needs work</th><th class="num">Published</th><th class="num">Total</th></tr>
+  {% for b in batches %}
+  <tr>
+    <td><a href="{{ url_for('batch', batch=b.name) }}">{{ b.name }}</a></td>
+    <td>{{ b.tote }}</td>
+    <td class="num">{{ b.ready }}</td><td class="num">{{ b.needs_work }}</td>
+    <td class="num">{{ b.published }}</td><td class="num">{{ b.total }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6" class="muted">No batches yet. Claude writes them to batches/&lt;batch&gt;/drafts.json.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

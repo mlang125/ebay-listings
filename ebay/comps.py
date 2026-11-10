@@ -8,13 +8,11 @@ Two sources:
 """
 
 import datetime
-import json
-import os
 import re
 import statistics
 import urllib.parse
 
-from . import api, db
+from . import api, db, drafts
 
 # Inventory API condition -> whether comps should look at new or used items.
 NEW_CONDITIONS = {"NEW", "LIKE_NEW", "NEW_OTHER", "NEW_WITH_DEFECTS"}
@@ -143,24 +141,16 @@ def active_comps(item):
     return listings
 
 
-def _load(batch_dir):
-    with open(os.path.join(batch_dir, "drafts.json")) as f:
-        return json.load(f)
-
-
-def _save(batch_dir, drafts):
-    with open(os.path.join(batch_dir, "drafts.json"), "w") as f:
-        json.dump(drafts, f, indent=2)
-
-
 def _today():
     return datetime.date.today().isoformat()
 
 
-def refresh_active(batch_dir, skus=None):
-    """Fetch active comps for each unpublished draft and store a summary in drafts.json."""
-    drafts = _load(batch_dir)
-    for item in drafts["items"]:
+def refresh_active(conn, batch, skus=None, log=print, user=None, actor="cli"):
+    """Fetch active comps for each unpublished draft in a batch and store a summary on the draft."""
+    batch_drafts = drafts.load(conn, batch)
+    if batch_drafts is None:
+        raise SystemExit("No drafts in batch %s" % batch)
+    for item in batch_drafts["items"]:
         if item.get("published") or item.get("skip") or (skus and item["sku"] not in skus):
             continue
         listings = active_comps(item)
@@ -169,7 +159,9 @@ def refresh_active(batch_dir, skus=None):
         comps["sold_url"] = sold_url(item)
         comps["active"] = dict(_summary([l["price"] for l in listings]), checked=_today())
         comps["estimate"] = dict(estimate(item, listings), checked=_today())
-        print(
+        with conn:
+            drafts.save(conn, item, actor, user, changed=["comps"])
+        log(
             "%s  draft $%.2f  | estimate: %s  | active: %s\n          sold search: %s"
             % (
                 item["sku"],
@@ -179,20 +171,21 @@ def refresh_active(batch_dir, skus=None):
                 comps["sold_url"],
             )
         )
-    _save(batch_dir, drafts)
 
 
-def record_sold(batch_dir, sku, sales):
+def record_sold(conn, sku, sales, user=None, actor="cli"):
     """Save sold comps read from eBay's website.
 
     sales: list of {"price": float, "shipping": float|None, "date": "YYYY-MM-DD",
                     "condition": str, "title": str}
     """
-    drafts = _load(batch_dir)
-    item = next(i for i in drafts["items"] if i["sku"] == sku)
+    _, item = drafts.get(conn, sku)
+    if item is None:
+        raise SystemExit("No draft for %s" % sku)
     comps = item.setdefault("comps", {})
     comps["sold"] = dict(_summary([s["price"] for s in sales]), checked=_today(), sales=sales)
-    _save(batch_dir, drafts)
+    with conn:
+        drafts.save(conn, item, actor, user, changed=["comps.sold"])
     return comps["sold"]
 
 

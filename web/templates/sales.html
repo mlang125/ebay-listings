@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Sales{% endblock %}
+{% block body %}
+<h1>Sales <span class="muted">since {{ s.since }}</span></h1>
+<div class="stats">
+  <div class="card stat"><span class="label">Item sales</span><span class="value">{{ money(s.sales) }}</span><span class="muted small">{{ s['items'] }} items, {{ s.orders }} orders</span></div>
+  <div class="card stat"><span class="label">Shipping paid by buyers</span><span class="value">{{ money(s.shipping) }}</span></div>
+  <div class="card stat"><span class="label">Average sale</span><span class="value">{{ money(s.average) }}</span><span class="muted small">median {{ money(s.median) }}</span></div>
+  <div class="card stat"><span class="label">Last 30 days</span><span class="value">{{ money(s.last30.sales) }}</span><span class="muted small">{{ s.last30['items'] }} items · last 7 days {{ s.last7['items'] }} items</span></div>
+  <div class="card stat"><span class="label">Sell-through, 30 days</span><span class="value">{{ '%.1f'|format(100 * s.sell_through_30) }}%</span><span class="muted small">of what was listed, sold</span></div>
+  <div class="card stat"><span class="label">Cancelled orders</span><span class="value">{{ s.cancelled }}</span><span class="muted small">{{ '%.0f'|format(100 * s.cancel_rate) }}% of orders</span></div>
+</div>
+
+<h2>By month</h2>
+<table>
+  <tr><th>Month</th><th class="num">Orders</th><th class="num">Items</th><th class="num">Item sales</th><th class="num">Shipping paid</th><th class="num">Average</th><th class="num">Cancelled</th></tr>
+  {% for m in months %}
+  <tr><td>{{ m.month }}</td><td class="num">{{ m.orders }}</td><td class="num">{{ m['items'] }}</td><td class="num">{{ money(m.sales) }}</td>
+    <td class="num">{{ money(m.shipping) }}</td><td class="num">{{ money(m.average) }}</td><td class="num">{{ m.cancelled }}</td></tr>
+  {% endfor %}
+</table>
+
+<div class="grid">
+  <section>
+    <h2>By sale price</h2>
+    <table>
+      <tr><th>Price</th><th class="num">Items</th><th class="num">Sales</th><th class="num">Share</th></tr>
+      {% for b in bands %}
+      <tr><td>{{ b.band }}</td><td class="num">{{ b['items'] }}</td><td class="num">{{ money(b.sales) }}</td><td class="num">{{ '%.0f'|format(100 * b.share) }}%</td></tr>
+      {% endfor %}
+    </table>
+  </section>
+  <section>
+    <h2>Listed now</h2>
+    <table>
+      <tr><td>Listings</td><td class="num">{{ active['items'] }}</td></tr>
+      <tr><td>Total asking price</td><td class="num">{{ money(active.asking) }}</td></tr>
+      <tr><td>Average asking price</td><td class="num">{{ money(active.average_asking) }}</td></tr>
+      <tr><td>Median time listed</td><td class="num">{{ active.median_age|int if active.median_age is not none else '?' }} days</td></tr>
+      {% for a in active.ages %}<tr><td class="muted">Listed {{ a.band }}</td><td class="num">{{ a['items'] }}</td></tr>{% endfor %}
+    </table>
+  </section>
+</div>
+<p class="muted small">Item sales are item prices before eBay fees, without tax. Cancelled orders are left out.
+  eBay fees and what items cost aren't recorded yet, so there's no profit figure. Days-to-sell isn't shown:
+  items sold before the tracking sheet existed have no real listing date.</p>
+{% endblock %}

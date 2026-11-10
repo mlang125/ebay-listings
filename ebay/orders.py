@@ -19,10 +19,10 @@ EBAY_TZ = zoneinfo.ZoneInfo("America/Los_Angeles")  # eBay dates its days in Pac
 FLOW = ["PENDING", "LISTED", "BOUGHT", "LABEL_PRINTED", "PACKAGED", "SENT_TO_POST_OFFICE", "DELIVERED"]
 
 
-def _advance(conn, sku, status, data):
+def _advance(conn, sku, status, data, user=None):
     current = conn.execute("SELECT status FROM items WHERE sku = ?", (sku,)).fetchone()["status"]
     if current in FLOW and FLOW.index(current) < FLOW.index(status):
-        db.set_status(conn, sku, status, "sync", data=data)
+        db.set_status(conn, sku, status, "sync", user, data=data)
 
 
 def _fetch_orders(days):
@@ -44,8 +44,8 @@ def _money(amount):
     return float(amount["value"]) if amount else None
 
 
-def sync(conn, days=90):
-    """Pull the last `days` of orders and update orders, lines and item statuses."""
+def sync(conn, days=90, user=None):
+    """Pull the last `days` of orders and update orders, lines and item statuses. `user`: who ran it."""
     counts = {"orders": 0, "new_lines": 0, "new_items": 0, "changes": []}
     with conn:
         for o in _fetch_orders(days):
@@ -74,10 +74,10 @@ def sync(conn, days=90):
                 sku = listing["sku"] if listing else None
                 if not sku:
                     sku = db.next_sku(conn)
-                    db.upsert_item(conn, sku, "LISTED", "sync", at=o["creationDate"][:19], title=line["title"],
+                    db.upsert_item(conn, sku, "LISTED", "sync", user, at=o["creationDate"][:19], title=line["title"],
                                    price=_money(line["lineItemCost"]), quantity=0)
                     db.record_listing(conn, sku, "production", line["legacyItemId"], None, None,
-                                      o["creationDate"][:19], "sync")
+                                      o["creationDate"][:19], "sync", user)
                     counts["new_items"] += 1
                 # The Orders report gave some lines a made-up ID; switch them to eBay's.
                 conn.execute(
@@ -92,18 +92,26 @@ def sync(conn, days=90):
                 ).rowcount
                 counts["new_lines"] += new
                 remaining = conn.execute("SELECT quantity, status FROM items WHERE sku = ?", (sku,)).fetchone()
-                if remaining["quantity"] > 0 or remaining["status"] in ("RETURNED", "CANCELLED"):
-                    continue  # more units still listed, or already settled
+                if remaining["quantity"] > 0 or remaining["status"] == "RETURNED":
+                    continue  # more units still listed, or settled by hand
+                latest = conn.execute(
+                    "SELECT o.order_id FROM order_lines ol JOIN orders o ON o.order_id = ol.order_id"
+                    " WHERE ol.sku = ? ORDER BY o.created_at DESC, o.order_id DESC LIMIT 1", (sku,)
+                ).fetchone()["order_id"]
+                if latest != o["orderId"]:
+                    continue  # an item sold more than once (e.g. resold after a cancellation) follows its latest order
                 before = remaining["status"]
                 data = {"order_id": o["orderId"]}
                 if cancelled and not shipped:
-                    db.set_status(conn, sku, "CANCELLED", "sync", data=data)
+                    db.set_status(conn, sku, "CANCELLED", "sync", user, data=data)
                 elif cancelled:
                     counts["changes"].append((sku, before, before + " (order cancelled after shipping: refund?)", line["title"]))
                 else:
-                    _advance(conn, sku, "BOUGHT", data)
+                    if before == "CANCELLED":
+                        db.set_status(conn, sku, "BOUGHT", "sync", user, data=data)  # sold again after a cancellation
+                    _advance(conn, sku, "BOUGHT", data, user)
                     if shipped:
-                        _advance(conn, sku, "SENT_TO_POST_OFFICE", data)
+                        _advance(conn, sku, "SENT_TO_POST_OFFICE", data, user)
                 after = conn.execute("SELECT status FROM items WHERE sku = ?", (sku,)).fetchone()["status"]
                 if after != before:
                     counts["changes"].append((sku, before, after, line["title"]))
@@ -114,7 +122,7 @@ def pick_list(conn, within_days=None, today=None):
     """Items sold and not yet shipped, by tote; optionally only those due within N days (0 = today)."""
     today = today or datetime.date.today()
     sql = """
-        SELECT i.sku, i.status, l.code AS tote, o.ship_by, o.order_id, i.title
+        SELECT i.sku, i.status, l.code AS tote, o.ship_by, o.order_id, i.title, i.missing_since
         FROM items i
         JOIN order_lines ol ON ol.sku = i.sku
         JOIN orders o ON o.order_id = ol.order_id

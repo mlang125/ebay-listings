@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Relists{% endblock %}
+{% block body %}
+<h1>Cancelled and returned items</h1>
+<p class="muted">Items that came back to us unsold. Link each one to the SKU it was relisted under, so it stops showing here.
+  To link one by hand, open it and fill in "Relisted as".</p>
+
+{% if pairs %}
+<form method="post" class="card">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <h2>Looks relisted ({{ pairs|length }})</h2>
+  <p class="muted small">Same title on a newer listing. Untick any that aren't the same item.</p>
+  <table>
+    {% for old, new in pairs %}
+    <tr>
+      <td><input type="checkbox" name="pair" value="{{ old }}:{{ new }}" checked aria-label="Link {{ old }} to {{ new }}"></td>
+      <td><a href="{{ url_for('item', sku=old) }}">{{ old }}</a> → <a href="{{ url_for('item', sku=new) }}">{{ new }}</a></td>
+      <td>{{ titles[old] }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p><button class="primary">Link ticked items</button></p>
+</form>
+{% endif %}
+
+<h2>Not relisted yet ({{ rows|length }})</h2>
+<table>
+  <tr><th>SKU</th><th>Status</th><th>Tote</th><th>Title</th></tr>
+  {% for r in rows %}
+  <tr>
+    <td><a href="{{ url_for('item', sku=r.sku) }}">{{ r.sku }}</a></td>
+    <td>{{ r.status }}{% if r.missing_since %} <span class="tag needs-work">missing</span>{% endif %}</td>
+    <td>{% if r.tote %}<a href="{{ url_for('tote', code=r.tote) }}">{{ r.tote }}</a>{% else %}<span class="muted">?</span>{% endif %}</td>
+    <td>{{ r.title }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="4" class="muted">Nothing waiting.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

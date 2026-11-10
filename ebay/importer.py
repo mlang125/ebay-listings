@@ -3,37 +3,18 @@
 import csv
 import datetime
 import glob
-import json
 import os
 import re
 
-from . import config, db
+from . import config, db, drafts
 
 
-def import_files(conn):
-    """Load batches/*/drafts.json and the old inventory.csv."""
+def import_files(conn, user=None):
+    """Load batches/*/drafts.json (new drafts only) and the old inventory.csv."""
     counts = {"drafts": 0, "listings": 0}
     with conn:
         for path in sorted(glob.glob(os.path.join(config.ROOT, "batches", "*", "drafts.json"))):
-            with open(path) as f:
-                drafts = json.load(f)
-            batch = db.batch_id(conn, drafts["batch"], drafts.get("tote"), drafts.get("source_zip"))
-            for item in drafts["items"]:
-                published = item.get("published", {}).get(config.ENV)
-                status = "SKIPPED" if item.get("skip") else "LISTED" if published else "PENDING"
-                db.upsert_item(
-                    conn,
-                    item["sku"],
-                    status,
-                    "import",
-                    at=published["listed_at"] if published else None,
-                    title=item["title"],
-                    condition=item["condition"],
-                    price=item["price"],
-                    batch_id=batch,
-                    location_id=db.location_id(conn, drafts.get("tote")),
-                )
-                counts["drafts"] += 1
+            counts["drafts"] += drafts.import_json(conn, path, "import", user)[0]
 
         csv_path = os.path.join(config.ROOT, "inventory.csv")
         if os.path.exists(csv_path):
@@ -43,7 +24,7 @@ def import_files(conn):
                         conn,
                         row["sku"],
                         "LISTED",
-                        "import",
+                        "import", user,
                         at=row["listed_at"],
                         title=row["title"],
                         price=float(row["price"]),
@@ -51,7 +32,7 @@ def import_files(conn):
                         location_id=db.location_id(conn, row["tote"]),
                     )
                     db.record_listing(conn, row["sku"], row["env"], row["listing_id"], row["offer_id"],
-                                      float(row["price"]), row["listed_at"], "import")
+                                      float(row["price"]), row["listed_at"], "import", user)
                     counts["listings"] += 1
     return counts
 
@@ -138,7 +119,7 @@ def plan_tracking_import(tracking_path, active_path, last_binned_title):
     return plan, unmatched_rows
 
 
-def apply_tracking_import(conn, plan):
+def apply_tracking_import(conn, plan, user=None):
     """Create an item (new MV-##### SKU) for each planned listing we don't have yet."""
     created = 0
     with conn:
@@ -148,16 +129,16 @@ def apply_tracking_import(conn, plan):
                 "SELECT 1 FROM items WHERE sku = ?", (p["sku"],)).fetchone() else None
             if sku:
                 # Already ours (listed by this tool): refresh price/title, keep its tote.
-                db.upsert_item(conn, sku, "LISTED", "import", title=p["title"], price=p["price"], category=p["category"])
+                db.upsert_item(conn, sku, "LISTED", "import", user, title=p["title"], price=p["price"], category=p["category"])
             else:
                 sku = db.next_sku(conn)
                 db.upsert_item(
-                    conn, sku, "LISTED", "import",
+                    conn, sku, "LISTED", "import", user,
                     title=p["title"], price=p["price"], category=p["category"],
                     location_id=db.location_id(conn, p["location"]), notes=p["notes"],
                 )
                 created += 1
-            db.record_listing(conn, sku, "production", p["listing_id"], None, p["price"], db.now(), "import")
+            db.record_listing(conn, sku, "production", p["listing_id"], None, p["price"], db.now(), "import", user)
     return created
 
 
@@ -175,7 +156,7 @@ def _money(text):
     return float(text.replace("$", "").replace(",", "")) if text else None
 
 
-def import_listings_report(conn, path):
+def import_listings_report(conn, path, user=None):
     """Fill in condition, category, quantity, price and start date from Seller Hub's All listings report."""
     with open(path, encoding="utf-8-sig") as f:
         rows = list(csv.DictReader(f))
@@ -211,7 +192,7 @@ def _tracking_totes(tracking_path, last_binned_title):
     return lambda listing_id, title: by_id.get(listing_id) or by_title.get(_norm(title))
 
 
-def import_orders_report(conn, path, tracking_path=None, last_binned_title=None, today=None):
+def import_orders_report(conn, path, tracking_path=None, last_binned_title=None, today=None, user=None):
     """Load Seller Hub's Orders report: orders, their lines, and the sold items' statuses.
 
     Keeps only order data (no buyer names or addresses). A line for a listing we
@@ -240,9 +221,13 @@ def import_orders_report(conn, path, tracking_path=None, last_binned_title=None,
         for order_id, o in orders.items():
             h = o["header"]
             shipped = _date(h["Shipped On Date"])
+            # An order already in the database keeps its status (the order sync may have marked it
+            # cancelled or returned, which this report can't show); only the report-only fields are filled in.
             conn.execute(
-                "INSERT OR REPLACE INTO orders (order_id, created_at, ship_by, buyer_paid_shipping, total, status,"
-                " shipped_at, shipping_service) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO orders (order_id, created_at, ship_by, buyer_paid_shipping, total, status,"
+                " shipped_at, shipping_service) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT (order_id) DO UPDATE SET shipped_at = COALESCE(shipped_at, excluded.shipped_at),"
+                " shipping_service = COALESCE(shipping_service, excluded.shipping_service)",
                 (order_id, _date(h["Sale Date"]), _date(h["Ship By Date"]), _money(h["Shipping And Handling"]),
                  _money(h["Total Price"]), "shipped" if shipped else "unshipped", shipped, h["Shipping Service"] or None),
             )
@@ -254,15 +239,27 @@ def import_orders_report(conn, path, tracking_path=None, last_binned_title=None,
                     sku = db.next_sku(conn)
                     found = tote_of(line["Item Number"], line["Item Title"])
                     db.upsert_item(
-                        conn, sku, "LISTED", "import", at=_date(line["Sale Date"]),
+                        conn, sku, "LISTED", "import", user, at=_date(line["Sale Date"]),
                         title=line["Item Title"], price=_money(line["Sold For"]), quantity=0,
                         location_id=db.location_id(conn, found[0] if found else None),
                         notes=found[1] if found and found[1] else None,
                     )
                     db.record_listing(conn, sku, "production", line["Item Number"], None, None,
-                                      _date(line["Sale Date"]), "import")
+                                      _date(line["Sale Date"]), "import", user)
                     counts["new_items"] += 1
                 line_id = line["Transaction ID"] or "%s-%s" % (order_id, line["Item Number"])
+                known = conn.execute(
+                    "SELECT 1 FROM order_lines WHERE line_item_id = ? OR (order_id = ? AND listing_id = ?)",
+                    (line_id, order_id, line["Item Number"]),
+                ).fetchone()
+                if known:
+                    conn.execute(
+                        "UPDATE order_lines SET tracking = COALESCE(tracking, ?), promoted = COALESCE(promoted, ?)"
+                        " WHERE order_id = ? AND listing_id = ?",
+                        (line["Tracking Number"] or None, line["Sold Via Promoted Listings"] == "Yes", order_id, line["Item Number"]),
+                    )
+                    counts["lines"] += 1
+                    continue  # already imported (or synced): leave its item's status alone
                 new_line = conn.execute(
                     "INSERT OR IGNORE INTO order_lines (line_item_id, order_id, sku, listing_id, title, price, quantity,"
                     " tracking, promoted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -273,9 +270,9 @@ def import_orders_report(conn, path, tracking_path=None, last_binned_title=None,
                 remaining = conn.execute("SELECT quantity FROM items WHERE sku = ?", (sku,)).fetchone()["quantity"]
                 if not new_line or remaining > 0:
                     continue  # already imported, or more units still listed (multi-quantity listing)
-                db.set_status(conn, sku, "BOUGHT", "import", data={"order_id": order_id}, at=_date(line["Sale Date"]))
+                db.set_status(conn, sku, "BOUGHT", "import", user, data={"order_id": order_id}, at=_date(line["Sale Date"]))
                 if shipped:
-                    db.set_status(conn, sku, "SENT_TO_POST_OFFICE", "import",
+                    db.set_status(conn, sku, "SENT_TO_POST_OFFICE", "import", user,
                                   data={"tracking": line["Tracking Number"] or None}, at=shipped)
                 else:
                     counts["unshipped"].append((sku, line["Item Title"], _date(h["Ship By Date"]) or "", _date(h["Sale Date"])))
