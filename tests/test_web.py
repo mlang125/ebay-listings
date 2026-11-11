@@ -22,7 +22,7 @@ S = tempfile.mkdtemp(prefix="ebay-webtest-")
 shutil.copy(os.path.join(ROOT, "data", "ebay.db"), os.path.join(S, "ebay.db"))
 shutil.copytree(os.path.join(ROOT, "batches", "batch1"), os.path.join(S, "batches", "batch1"))
 
-from ebay import comps, db, drafts, listings, orders  # noqa: E402
+from ebay import comps, db, drafts, listings, orders, sales  # noqa: E402
 from web import create_app  # noqa: E402
 from werkzeug.datastructures import MultiDict  # noqa: E402
 conn = db.connect(S + "/ebay.db"); db.set_password(conn, "matt", "testpass123"); db.add_user(conn, "sam", "lister"); db.set_password(conn, "sam", "testpass456"); conn.close()
@@ -408,6 +408,11 @@ page = c.get("/totes/" + T).get_data(as_text=True)
 assert "Print contents" in page and '<div class="grid noprint">' in page and '<details class="noprint">' in page
 
 assert c.get("/totes/not-a-tote/count").status_code == 404
+
+# --- activity: weekly counts ---
+weeks = sales.by_week(fresh())
+assert len(weeks) == 8 and weeks[0][0].weekday() == 0 and weeks[0][1][1] >= moved_today
+check(c.get("/activity"), has=["By week", "(this week)", "Labels printed", "Shipped"])
 
 # --- nav shows where you are ---
 for page, label in [("/items", "Items"), ("/items/MV-00005", "Items"), ("/totes", "Totes"), ("/picklist", "Pick list"), ("/checks", "Checks")]:

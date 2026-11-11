@@ -1194,7 +1194,8 @@ def _routes(app):
         actions = [r["action"] for r in g.conn.execute("SELECT DISTINCT action FROM events ORDER BY action")]
         return render_template("activity.html", rows=rows[:100], more=len(rows) > 100, page=page, who=who,
                                action=action, q=q, users=users, actions=actions, parse_json=_parse_json,
-                               people=sales.by_user(g.conn))
+                               people=sales.by_user(g.conn), weeks=sales.by_week(g.conn),
+                               week_labels=[label for label, _ in sales.TODAY])
 
     @app.route("/sales")
     @login_required

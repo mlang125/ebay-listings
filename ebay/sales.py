@@ -120,6 +120,20 @@ def today_counts(conn, today=None):
     return [(n, label) for n, (label, _) in zip(row, TODAY) if n]
 
 
+def by_week(conn, weeks=8, today=None):
+    """The Today counts per week (Monday to Sunday), newest first, for the last `weeks` weeks."""
+    today = today or datetime.date.today()
+    monday = today - datetime.timedelta(days=today.weekday())
+    out = []
+    for w in range(weeks):
+        start = monday - datetime.timedelta(weeks=w)
+        end = start + datetime.timedelta(weeks=1)
+        row = conn.execute("SELECT " + ", ".join("COUNT(CASE WHEN %s THEN 1 END)" % cond for _, cond in TODAY)
+                           + " FROM events e WHERE e.at >= ? AND e.at < ?", (start.isoformat(), end.isoformat())).fetchone()
+        out.append((start, list(row)))
+    return out
+
+
 def by_user(conn, days=30, today=None):
     """What each person did in the last `days` days, from the event log."""
     today = today or datetime.date.today()

@@ -13,6 +13,16 @@
 </table>
 <p class="muted small">"(no user)" is the imports and order syncs run before everything was signed.</p>
 
+<h2>By week</h2>
+<table>
+  <tr><th>Week of</th>{% for label in week_labels %}<th class="num">{{ label|capitalize }}</th>{% endfor %}</tr>
+  {% for start, counts in weeks %}
+  <tr><td class="nowrap">{{ start.strftime('%b %-d') }}{% if loop.first %} <span class="muted small">(this week)</span>{% endif %}</td>
+    {% for n in counts %}<td class="num">{{ n or '' }}</td>{% endfor %}</tr>
+  {% endfor %}
+</table>
+<p class="muted small">Weeks before November 2026 come from imported records: their "listed" counts are import dates, not real listing dates.</p>
+
 <h2>Everything, newest first</h2>
 <form class="filters">
   <select name="who"><option value="">Anyone</option>
