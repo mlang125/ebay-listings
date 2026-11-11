@@ -14,7 +14,8 @@
     <button>Next</button>
   </form>
   <div class="card">
-    <p>Next free tote ID: <strong>{{ suggestion }}</strong></p>
+    <p>Next free tote ID: <strong>{{ suggestion }}</strong> · <a href="{{ url_for('labels', codes=suggestion) }}">label</a></p>
+    <p><a href="{{ url_for('labels') }}">Print labels for every tote</a></p>
     <p class="muted small">A tote counts as free once nothing in it is still on hand (shipped items keep their old tote in the history only).</p>
   </div>
 </div>

@@ -32,7 +32,7 @@
   {% for r in rows %}
   <tr>
     {{ tick(r.sku) }}
-    <td><a href="{{ url_for('item', sku=r.sku) }}">{{ r.sku }}</a></td>
+    <td class="nowrap"><a href="{{ url_for('item', sku=r.sku) }}">{{ r.sku }}</a></td>
     <td>{{ r.status }}{% if r.missing_since %} <span class="tag needs-work">missing</span>{% endif %}</td>
     <td>{% if r.tote %}<a href="{{ url_for('tote', code=r.tote) }}">{{ r.tote }}</a>{% else %}<span class="muted">?</span>{% endif %}</td>
     <td class="num">{{ money(r.price) }}</td>

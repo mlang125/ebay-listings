@@ -6,12 +6,15 @@ database. Every change is recorded under the signed-in person. Run it with `cli.
 
 import datetime
 import functools
+import io
 import json
 import os
 import re
 import secrets
 
+import segno
 from flask import Flask, abort, flash, g, redirect, render_template, request, send_from_directory, session, url_for
+from markupsafe import Markup
 from werkzeug.security import check_password_hash
 
 from ebay import api, comps, config, db, drafts, listings, orders, sales
@@ -671,6 +674,22 @@ def _routes(app):
         return render_template("tote.html", code=code, place=place, rows=here, gone=gone, codes=codes,
                                suggestion=db.suggest_tote(g.conn), checked=checked, statuses=db.STATUSES)
 
+    @app.route("/labels")
+    @login_required
+    def labels():
+        """Printable 4x6 tote labels: the code in big letters and a QR code that opens the tote's page."""
+        try:
+            codes = list(dict.fromkeys(_codes(request.args.get("codes", ""))))
+        except ValueError as e:
+            flash(str(e), "error")
+            return redirect(url_for("totes"))
+        if not codes:
+            codes = sorted(db.totes_in_use(g.conn), key=lambda c: (c in db.PLACES, c[0], int(c[1:]) if c[1:].isdigit() else 0))
+        base = config.LABEL_URL or request.host_url.rstrip("/")
+        made = [{"code": c, "url": base + url_for("tote", code=c), "qr": _qr_svg(base + url_for("tote", code=c)),
+                 "count": len(db.on_hand(g.conn, c))} for c in codes]
+        return render_template("labels.html", labels=made, base=base, label_url_set=bool(config.LABEL_URL))
+
     @app.route("/totes/<code>/checked", methods=["POST"])
     @login_required
     def tote_checked(code):
@@ -788,6 +807,14 @@ ITEMS_SQL = """
            %s AS days_listed, %s AS last_change
     FROM items i LEFT JOIN locations l ON l.id = i.location_id
 """ % (DAYS_LISTED, LAST_CHANGE)
+
+
+def _qr_svg(text):
+    """A QR code as inline SVG markup (sized by CSS)."""
+    out = io.BytesIO()
+    segno.make(text, error="m").save(out, kind="svg", border=2, xmldecl=False, svgns=True, omitsize=True,
+                                     svgclass="qr", nl=False)
+    return Markup(out.getvalue().decode())
 
 
 def _money_fmt(value):

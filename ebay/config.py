@@ -38,6 +38,9 @@ CLI_USER = _ENV_VALUES.get("CLI_USER") or None
 # EBAY_READ_ONLY=1 blocks every eBay call that would change something (publishing, offers,
 # photo uploads, setup); lookups such as comps, order sync and categories still work.
 READ_ONLY = (_ENV_VALUES.get("EBAY_READ_ONLY") or "").lower() in ("1", "true", "yes")
+# Address printed tote labels point to (e.g. http://my-mac.local:5050). Without it, labels use
+# whatever address the page was opened with, which breaks if the Mac's IP address changes.
+LABEL_URL = (_ENV_VALUES.get("LABEL_URL") or "").rstrip("/") or None
 
 
 ENV = "production"  # or "sandbox" for testing

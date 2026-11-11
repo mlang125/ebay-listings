@@ -232,6 +232,17 @@ assert "/totes/OT" not in html and "/totes/UN" not in html, "places aren't totes
 assert ("/totes/%s\"" % FREE) not in html, "the tote checked earlier in this run isn't listed"
 assert count(check(c.get("/items?status=ON_HAND"))) == fresh().execute("select count(*) from items where status not in ('SENT_TO_POST_OFFICE', 'DELIVERED')").fetchone()[0]
 
+# --- tote labels ---
+html = check(c.get("/labels?codes=w9 ot"), has=['<div class="label-code">W9</div>', '<div class="label-code">OT</div>', 'class="qr"', "Print"])
+import web as web_module  # noqa: E402
+assert html.count('<svg') == 2
+assert str(web_module._qr_svg("http://localhost/totes/W9")) in html, "the QR code opens the tote's page"
+assert "isn&#39;t a tote code" in check(c.get("/labels?codes=zz9", follow_redirects=True))
+in_use = len(db.totes_in_use(fresh()))
+assert check(c.get("/labels")).count('class="label-code"') == in_use
+check(c.get("/totes/W9"), has=["Print label"])
+assert "4in 6in" not in open(os.path.join(ROOT, "web", "static", "style.css")).read(), "label page size must not leak into other printouts"
+
 # --- shipping, numbers, activity ---
 check(c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "PACKAGED", "days": ""}, follow_redirects=True), has=["packaged"])
 assert c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "DELIVERED"}).status_code == 400

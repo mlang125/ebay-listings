@@ -140,3 +140,15 @@ ul.attention li { padding: 6px 0; border-bottom: 1px solid var(--line); }
 ul.attention li:last-child { border-bottom: 0; }
 ul.attention a { text-decoration: none; color: var(--text); display: block; }
 ul.attention a strong { display: inline-block; min-width: 2.5em; color: var(--accent); }
+
+/* Tote labels: 4x6 inches, one per printed page. */
+.labels { display: flex; flex-wrap: wrap; gap: 16px; }
+.label { width: 4in; height: 6in; background: #fff; color: #000; border: 1px dashed var(--line); border-radius: 8px;
+         display: flex; flex-direction: column; align-items: center; justify-content: space-between; padding: 0.25in; }
+.label-code { font-size: 1.9in; font-weight: 800; line-height: 1; letter-spacing: -0.02em; font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; }
+.label svg.qr { width: 2.6in; height: 2.6in; }
+.label-foot { font-size: 14pt; }
+@media print {
+  .labels { display: block; }
+  .label { border: 0; border-radius: 0; break-after: page; margin: 0; }
+}

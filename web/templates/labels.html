@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Tote labels{% endblock %}
+{% block body %}
+{# Only this page prints at label size; the pick list keeps the normal paper size. #}
+<style>@media print { @page { size: 4in 6in; margin: 0; } }</style>
+<div class="noprint">
+  <div class="head">
+    <h1>Tote labels <span class="muted">{{ labels|length }}</span></h1>
+    <button class="primary" onclick="window.print()">Print</button>
+  </div>
+  <form class="filters">
+    <input name="codes" value="{{ request.args.codes or '' }}" placeholder="Totes, e.g. A5 B2 (empty = every tote in use)" autocapitalize="characters">
+    <button>Show</button>
+  </form>
+  <p class="muted small">One 4×6 label per page. Scanning the code opens the tote's page at {{ base }}.
+    {% if not label_url_set %}That's the address this page was opened with; if the Mac's address changes, set
+    LABEL_URL in .env (for example http://your-mac-name.local:5050) before printing.{% endif %}</p>
+</div>
+<div class="labels">
+  {% for l in labels %}
+  <div class="label">
+    <div class="label-code">{{ l.code }}</div>
+    {{ l.qr }}
+    <div class="label-foot">Scan for what's inside</div>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

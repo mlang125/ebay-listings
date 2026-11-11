@@ -8,6 +8,7 @@
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <span class="muted small">{% if checked %}Last checked {{ checked.at[:10] }} by {{ checked.name or '?' }}{% else %}Never checked{% endif %}</span>
     <button>I checked this tote</button>
+    <a href="{{ url_for('labels', codes=code) }}">Print label</a>
   </form>
 </div>
 {% if place and place.notes %}<p class="muted">{{ place.notes }}</p>{% endif %}
@@ -47,7 +48,7 @@
     {% for r in rows %}
     <tr class="{{ 'missing' if r.missing_since else '' }}">
       {{ tick(r.sku) }}
-      <td><a href="{{ url_for('item', sku=r.sku) }}">{{ r.sku }}</a></td>
+      <td class="nowrap"><a href="{{ url_for('item', sku=r.sku) }}">{{ r.sku }}</a></td>
       <td>{{ r.status }}{% if r.missing_since %} <span class="tag needs-work">missing</span>{% endif %}</td>
       <td class="num">{{ money(r.price) }}</td><td>{{ r.title }}</td>
       <td><input name="to_{{ r.sku }}" list="codes" size="5" class="tote-input" autocapitalize="characters" aria-label="Move {{ r.sku }} to"></td>
