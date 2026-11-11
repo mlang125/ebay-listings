@@ -205,3 +205,6 @@ ul.attention a strong { display: inline-block; min-width: 2.5em; color: var(--ac
   .bulk .bulk-group input[name=note] { flex: 1 1 8em; }
 }
 .suggested { color: var(--warn); }
+
+nav.top form.find input { margin: 0; padding: 4px 8px; width: 11em; min-height: 0; }
+@media (max-width: 640px) { nav.top form.find { order: -1; flex: 0 0 auto; } nav.top form.find input { width: 8.5em; } }

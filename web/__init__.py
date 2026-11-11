@@ -443,6 +443,23 @@ def _routes(app):
 
     # --- items and totes ---
 
+    @app.route("/find")
+    @login_required
+    def find():
+        """The search box in the top bar: a SKU (or just its number) opens the item, a tote code opens
+        the tote, anything else searches item titles."""
+        q = request.args.get("q", "").strip()
+        sku = q.upper()
+        if re.fullmatch(r"\d{1,5}", q):
+            sku = "MV-%05d" % int(q)
+        elif re.fullmatch(r"MV-?\d{1,5}", sku):
+            sku = "MV-%05d" % int(sku.replace("MV", "").strip("-"))
+        if g.conn.execute("SELECT 1 FROM items WHERE sku = ?", (sku,)).fetchone():
+            return redirect(url_for("item", sku=sku))
+        if q.upper() in db.PLACES or db.TOTE_CODE_RE.match(q.upper()) and q.upper() in db.totes_in_use(g.conn):
+            return redirect(url_for("tote", code=q.upper()))
+        return redirect(url_for("items", q=q))
+
     def _item_filters():
         """The items page's filters from the URL, as (SQL, params, cleaned-up values)."""
         f = {k: request.args.get(k, "").strip() for k in ("q", "status", "tote", "min_price", "max_price", "min_days")}

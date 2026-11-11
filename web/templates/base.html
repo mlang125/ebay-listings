@@ -17,6 +17,9 @@
     <a href="{{ url_for('relists') }}">Relists</a>
     <a href="{{ url_for('sales_page') }}">Sales</a>
     <a href="{{ url_for('activity') }}">Activity</a>
+    <form action="{{ url_for('find') }}" class="find" role="search">
+      <input name="q" placeholder="SKU, tote or words" aria-label="Find an item or tote" autocapitalize="characters" enterkeyhint="search">
+    </form>
     <span class="spacer"></span>
     {% if env != 'production' %}<span class="tag warn">{{ env }}</span>{% endif %}
     {% if read_only %}<span class="tag warn" title="EBAY_READ_ONLY is set in .env: nothing can be published or changed on eBay">eBay read-only</span>{% endif %}

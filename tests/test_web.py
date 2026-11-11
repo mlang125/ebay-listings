@@ -296,6 +296,16 @@ assert r.status_code == 200 and r.mimetype == "text/csv" and "attachment" in r.h
 rows = list(csv_module.DictReader(io_module.StringIO(r.get_data(as_text=True))))
 assert len(rows) == count(check(c.get("/items?status=LISTED&tote=OT"))) and all(x["tote"] == "OT" and x["status"] == "LISTED" for x in rows)
 
+# --- quick find ---
+assert c.get("/find?q=1385").location.endswith("/items/MV-01385")
+assert c.get("/find?q=mv-1385").location.endswith("/items/MV-01385")
+assert c.get("/find?q=MV-01385").location.endswith("/items/MV-01385")
+assert c.get("/find?q=ot").location.endswith("/totes/OT")
+assert c.get("/find?q=e2").location.endswith("/totes/E2")
+assert "/items?q=teapot" in c.get("/find?q=teapot").location
+assert "/items?q=Z99" in c.get("/find?q=Z99").location, "a tote code with nothing in it falls back to search"
+check(c.get("/"), has=['action="/find"'])
+
 # --- shipping, numbers, activity ---
 check(c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "PACKAGED", "days": ""}, follow_redirects=True), has=["packaged"])
 assert c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "DELIVERED"}).status_code == 400
