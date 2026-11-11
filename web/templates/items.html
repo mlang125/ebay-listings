@@ -8,6 +8,7 @@
   <select name="status" aria-label="Status">
     <option value="">Any status</option>
     {% for s in statuses %}<option value="{{ s }}" {% if s == f.status %}selected{% endif %}>{{ s|replace('_', ' ')|lower|capitalize }}</option>{% endfor %}
+    <option value="ON_HAND" {% if f.status == 'ON_HAND' %}selected{% endif %}>On hand (not shipped)</option>
     <option value="MISSING" {% if f.status == 'MISSING' %}selected{% endif %}>Marked missing</option>
   </select>
   <select name="tote" aria-label="Tote">

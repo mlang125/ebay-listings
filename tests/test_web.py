@@ -215,6 +215,23 @@ r = c.post("/items/bulk", data=MultiDict([("csrf", tok), ("back", "/totes/W9"), 
 assert r.status_code == 302 and r.location.endswith("/totes/W9")
 assert db.on_hand(fresh(), "W8") == [on_w9[0]]
 
+# --- needs attention ---
+home = check(c.get("/"), has=["Needs attention", "in UN, waiting for a tote", "listed 90+ days"])
+links = re.findall(r'<li><a href="([^"]+)"><strong>(\d+)</strong> ([^<]+)</a></li>', home)
+assert len(links) >= 4, links
+for link, n, what in links:
+    page = check(c.get(link.replace("&amp;", "&")))
+    if "/items" in link:
+        assert count(page) == int(n), (what, count(page), n)
+    elif "/totes" in link:
+        assert len(re.findall(r'<td><a href="/totes/', page)) == int(n), what
+    elif "/relists" in link:
+        assert re.search(r"Not relisted yet \((\d+)\)", page)
+html = check(c.get("/totes?unchecked=1"), has=["nobody has checked yet"])
+assert "/totes/OT" not in html and "/totes/UN" not in html, "places aren't totes"
+assert ("/totes/%s\"" % FREE) not in html, "the tote checked earlier in this run isn't listed"
+assert count(check(c.get("/items?status=ON_HAND"))) == fresh().execute("select count(*) from items where status not in ('SENT_TO_POST_OFFICE', 'DELIVERED')").fetchone()[0]
+
 # --- shipping, numbers, activity ---
 check(c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "PACKAGED", "days": ""}, follow_redirects=True), has=["packaged"])
 assert c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "DELIVERED"}).status_code == 400

@@ -134,3 +134,9 @@ th.tick input, td.tick input { width: 1.1em; height: 1.1em; margin: 0; }
 .bulk button { opacity: 0.5; }
 .bulk.active button { opacity: 1; }
 .bulk.active { border-color: var(--accent); }
+
+ul.attention { list-style: none; padding: 0; margin: 0; }
+ul.attention li { padding: 6px 0; border-bottom: 1px solid var(--line); }
+ul.attention li:last-child { border-bottom: 0; }
+ul.attention a { text-decoration: none; color: var(--text); display: block; }
+ul.attention a strong { display: inline-block; min-width: 2.5em; color: var(--accent); }

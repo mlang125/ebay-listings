@@ -272,13 +272,39 @@ def _routes(app):
     def home():
         counts = dict(g.conn.execute("SELECT status, COUNT(*) FROM items GROUP BY status").fetchall())
         to_ship = orders.pick_list(g.conn)
+        today = datetime.date.today().isoformat()
         batches = _batch_summaries()
         return render_template(
             "home.html",
             counts=[(s, counts.get(s, 0)) for s in db.STATUSES if counts.get(s)],
             to_ship=to_ship,
+            overdue=[r for r in to_ship if r["ship_by"] and r["ship_by"] < today],
+            due_today=[r for r in to_ship if r["ship_by"] == today],
             batches=[b for b in batches if b["open"]],
+            attention=_attention(g.conn),
         )
+
+    def _attention(conn):
+        """Things someone should look at, each with a count and a link to the list. Zero counts are left out."""
+        def n(sql, *params):
+            return conn.execute(sql, params).fetchone()[0]
+        on_hand = "i.status NOT IN ('SENT_TO_POST_OFFICE', 'DELIVERED')"
+        found = [
+            (n("SELECT COUNT(*) FROM items i JOIN locations l ON l.id = i.location_id WHERE l.code = 'UN' AND " + on_hand),
+             "in UN, waiting for a tote", url_for("items", tote="UN", status="ON_HAND")),
+            (n("SELECT COUNT(*) FROM items i WHERE i.missing_since IS NOT NULL AND " + on_hand),
+             "marked missing", url_for("items", status="MISSING")),
+            (n("SELECT COUNT(*) FROM items WHERE status IN (?, ?, ?) AND relisted_as IS NULL", *db.RELISTABLE),
+             "cancelled or returned and not relisted", url_for("relists")),
+            (n("SELECT COUNT(*) FROM items i WHERE i.status = 'LISTED' AND " + DAYS_LISTED + " >= 90"),
+             "listed 90+ days (consider a price drop)", url_for("items", status="LISTED", min_days=90, sort="days", dir="desc")),
+            (n("SELECT COUNT(*) FROM items i WHERE i.location_id IS NULL AND " + on_hand),
+             "on hand with no known tote", url_for("items", tote="?", status="ON_HAND")),
+            (n("SELECT COUNT(DISTINCT l.id) FROM locations l JOIN items i ON i.location_id = l.id"
+               " WHERE l.kind = 'tote' AND l.checked_at IS NULL AND " + on_hand),
+             "totes never checked", url_for("totes", unchecked=1)),
+        ]
+        return [f for f in found if f[0]]
 
     # --- drafts ---
 
@@ -420,6 +446,9 @@ def _routes(app):
             params += ["%" + f["q"] + "%"] * 2
         if f["status"] == "MISSING":
             where.append("i.missing_since IS NOT NULL")
+        elif f["status"] == "ON_HAND":
+            where.append("i.status NOT IN (?, ?)")
+            params += list(db.GONE)
         elif f["status"]:
             where.append("i.status = ?")
             params.append(f["status"])
@@ -566,9 +595,13 @@ def _routes(app):
             " SUM(i.status = 'LISTED') AS listed, SUM(i.status IN ('PENDING', 'SKIPPED', 'ENDED', 'CANCELLED', 'RETURNED')) AS unlisted,"
             " SUM(i.status IN ('BOUGHT', 'LABEL_PRINTED', 'PACKAGED')) AS to_ship"
             " FROM locations l LEFT JOIN items i ON i.location_id = l.id"
-            " GROUP BY l.id" + order_by(TOTE_SORTS, "code", then="l.code")
+            + (" WHERE l.kind = 'tote' AND l.checked_at IS NULL" if request.args.get("unchecked") else "")
+            + " GROUP BY l.id"
+            + (" HAVING SUM(i.status NOT IN ('SENT_TO_POST_OFFICE', 'DELIVERED')) > 0" if request.args.get("unchecked") else "")
+            + order_by(TOTE_SORTS, "code", then="l.code")
         ).fetchall()
-        return render_template("totes.html", rows=rows, suggestion=db.suggest_tote(g.conn))
+        return render_template("totes.html", rows=rows, suggestion=db.suggest_tote(g.conn),
+                               unchecked=bool(request.args.get("unchecked")))
 
     def _codes(text):
         return [db.check_code(c) for c in re.split(r"[\s,+]+", text or "") if c.strip()]

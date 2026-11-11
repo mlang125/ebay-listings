@@ -1,8 +1,37 @@
 {% extends "base.html" %}
 {% block body %}
 <h1>Hi {{ g.user.name }}</h1>
+
+{% if overdue or due_today %}
+<div class="card warnbox">
+  <strong>Ship today:</strong>
+  {% if overdue %}{{ overdue|length }} overdue{% if due_today %}, {% endif %}{% endif %}
+  {% if due_today %}{{ due_today|length }} due today{% endif %}.
+  <a href="{{ url_for('picklist', days=0) }}">Open the pick list</a>
+</div>
+{% endif %}
+
 <div class="grid">
   <section class="card">
+    <h2>Needs attention</h2>
+    {% if attention %}
+    <ul class="attention">
+      {% for n, what, link in attention %}
+      <li><a href="{{ link }}"><strong>{{ n }}</strong> {{ what }}</a></li>
+      {% endfor %}
+    </ul>
+    {% else %}
+      <p class="muted">All clear.</p>
+    {% endif %}
+  </section>
+  <section class="card">
+    <h2>To ship</h2>
+    {% if to_ship %}
+      <p><strong>{{ to_ship|length }}</strong> sold and not shipped. Next due {{ to_ship|map(attribute='ship_by')|select|min }}.</p>
+      <p><a href="{{ url_for('picklist') }}">Open the pick list</a></p>
+    {% else %}
+      <p class="muted">Nothing to ship.</p>
+    {% endif %}
     <h2>Drafts to review</h2>
     {% for b in batches %}
       <p><a href="{{ url_for('batch', batch=b.name) }}">{{ b.name }}</a> (tote {{ b.tote }}):
@@ -10,15 +39,6 @@
     {% else %}
       <p class="muted">Nothing waiting.</p>
     {% endfor %}
-  </section>
-  <section class="card">
-    <h2>To ship</h2>
-    {% if to_ship %}
-      <p><strong>{{ to_ship|length }}</strong> sold and not shipped. Next due {{ to_ship|map(attribute='ship_by')|min }}.</p>
-      <p><a href="{{ url_for('picklist') }}">Open the pick list</a></p>
-    {% else %}
-      <p class="muted">Nothing to ship.</p>
-    {% endif %}
   </section>
   <section class="card">
     <h2>Items</h2>

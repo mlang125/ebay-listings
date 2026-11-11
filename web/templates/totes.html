@@ -18,6 +18,7 @@
     <p class="muted small">A tote counts as free once nothing in it is still on hand (shipped items keep their old tote in the history only).</p>
   </div>
 </div>
+{% if unchecked %}<p>Showing totes with items on hand that nobody has checked yet. <a href="{{ url_for('totes') }}">Show all totes</a></p>{% endif %}
 <table>
   <tr>{{ th('Tote', 'code') }}{{ th('Listed', 'listed', num=True) }}{{ th('Not listed', 'unlisted', num=True) }}{{ th('To ship', 'to_ship', num=True) }}{{ th('Missing', 'missing', num=True) }}{{ th('Checked', 'checked') }}<th></th></tr>
   {% for r in rows %}
