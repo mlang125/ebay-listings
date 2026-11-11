@@ -403,6 +403,10 @@ never = fresh().execute("select l.code from locations l join items i on i.locati
                         " and l.checked_at is null and i.status not in (?, ?) limit 1", db.GONE).fetchone()[0]
 check(c.get("/totes?unchecked=1"), has=['href="/totes/%s/count"' % never])
 
+# --- tote page prints as a contents sheet ---
+page = c.get("/totes/" + T).get_data(as_text=True)
+assert "Print contents" in page and '<div class="grid noprint">' in page and '<details class="noprint">' in page
+
 # --- nav shows where you are ---
 for page, label in [("/items", "Items"), ("/items/MV-00005", "Items"), ("/totes", "Totes"), ("/picklist", "Pick list"), ("/checks", "Checks")]:
     current = re.findall(r'aria-current="page">([^<]+)<', c.get(page).get_data(as_text=True))

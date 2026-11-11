@@ -101,6 +101,8 @@ tr.overdue td { color: var(--err); }
   main { max-width: none; padding: 0; }
   .print-head { display: block; margin-bottom: 8px; }
   .onlyprint { display: inline; }
+  .bulk, td.tick input, th.tick input { display: none !important; }
+  td.tick::before { content: "☐"; font-size: 1.3em; }
   table { border: 0; }
   td { padding: 4px 6px; }
   .pick-group { break-inside: avoid; }

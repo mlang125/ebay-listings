@@ -4,18 +4,19 @@
 {% block body %}
 <div class="head">
   <h1>{{ code }} <span class="muted">{{ rows|length }} on hand</span></h1>
-  <form method="post" action="{{ url_for('tote_checked', code=code) }}" class="inline actions">
+  <form method="post" action="{{ url_for('tote_checked', code=code) }}" class="inline actions noprint">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <span class="muted small">{% if checked %}Last checked {{ checked.at[:10] }} by {{ checked.name or '?' }}{% else %}Never checked{% endif %}</span>
     <a href="{{ url_for('tote_count', code=code) }}">Count items</a>
     <button>I checked this tote</button>
     <a href="{{ url_for('labels', codes=code) }}">Print label</a>
+    <button type="button" onclick="window.print()">Print contents</button>
   </form>
 </div>
 {% if place and place.notes %}<p class="muted">{{ place.notes }}</p>{% endif %}
 <datalist id="codes">{% for c in codes %}<option value="{{ c }}">{% endfor %}<option value="{{ suggestion }}">next free</option></datalist>
 
-<div class="grid">
+<div class="grid noprint">
   <form method="post" class="card">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <label>Put items in {{ code }} <span class="muted">SKUs, separated by spaces or commas</span>
@@ -38,22 +39,22 @@
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <div class="head">
     <h2>On hand</h2>
-    <span class="actions">
+    <span class="actions noprint">
       <span class="muted small">To split this tote, type where each item goes (next free: {{ suggestion }}). Leave blank to keep it here.
         Can't find something? Press Missing; it stays listed in {{ code }} until someone finds it.</span>
       <button class="primary">Move</button>
     </span>
   </div>
   <table class="itemrows">
-    <tr>{{ tick_all() }}{{ th('SKU', 'sku') }}{{ th('Status', 'status') }}{{ th('Price', 'price', num=True) }}{{ th('Title', 'title') }}<th>Move to</th><th></th></tr>
+    <tr>{{ tick_all() }}{{ th('SKU', 'sku') }}{{ th('Status', 'status') }}{{ th('Price', 'price', num=True) }}{{ th('Title', 'title') }}<th class="noprint">Move to</th><th class="noprint"></th></tr>
     {% for r in rows %}
     <tr class="{{ 'missing' if r.missing_since else '' }}">
       {{ tick(r.sku) }}
       <td class="nowrap"><a href="{{ url_for('item', sku=r.sku) }}">{{ r.sku }}</a></td>
       <td>{{ r.status }}{% if r.missing_since %} <span class="tag needs-work">missing</span>{% endif %}</td>
       <td class="num">{{ money(r.price) }}</td><td class="title">{{ r.title }}</td>
-      <td><input name="to_{{ r.sku }}" list="codes" size="5" class="tote-input" placeholder="move to" autocapitalize="characters" aria-label="Move {{ r.sku }} to"></td>
-      <td><button class="small" formaction="{{ url_for('item_missing', sku=r.sku) }}" name="missing" value="{{ '0' if r.missing_since else '1' }}">{{ 'Found' if r.missing_since else 'Missing' }}</button></td>
+      <td class="noprint"><input name="to_{{ r.sku }}" list="codes" size="5" class="tote-input" placeholder="move to" autocapitalize="characters" aria-label="Move {{ r.sku }} to"></td>
+      <td class="noprint"><button class="small" formaction="{{ url_for('item_missing', sku=r.sku) }}" name="missing" value="{{ '0' if r.missing_since else '1' }}">{{ 'Found' if r.missing_since else 'Missing' }}</button></td>
     </tr>
     {% endfor %}
   </table>
@@ -64,7 +65,7 @@
 {% endif %}
 
 {% if history %}
-<details>
+<details class="noprint">
   <summary class="muted">Recent changes ({{ history|length }}{{ '+' if history|length == 50 else '' }})</summary>
   <table>
     {% for e in history %}
@@ -82,7 +83,7 @@
 {% endif %}
 
 {% if gone %}
-<details>
+<details class="noprint">
   <summary class="muted">{{ gone|length }} shipped from here</summary>
   <table>
     {% for r in gone %}
