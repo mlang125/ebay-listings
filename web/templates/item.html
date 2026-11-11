@@ -96,7 +96,13 @@
     <td class="nowrap">{{ e.at.replace('T', ' ')[:16] }}</td>
     <td>{{ e.action }}{% if e.to_status %}: {{ e.from_status or '' }} → {{ e.to_status }}{% endif %}</td>
     <td>{{ e.user or e.actor }}</td>
-    <td class="muted small">{{ event_details(e.data) }}</td>
+    <td class="muted small">{{ event_details(e.data) }}
+      {% if undo_move and undo_move[0] == e.id %}
+      <form method="post" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="tote" value="{{ undo_move[1] }}">
+        <button class="small">Move back to {{ undo_move[1] }}</button>
+      </form>
+      {% endif %}</td>
   </tr>
   {% endfor %}
 </table>

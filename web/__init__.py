@@ -718,6 +718,13 @@ def _routes(app):
             " WHERE ol.sku = ? ORDER BY o.created_at DESC",
             (sku,),
         ).fetchall()
+        # The last move can be undone while the item is still where that move put it.
+        last_move = next((e for e in events if e["action"] == "moved"), None)
+        undo_move = None
+        if last_move and row["status"] not in db.GONE:
+            moved = _parse_json(last_move["data"]) or {}
+            if moved.get("from") and moved.get("to") == row["tote"]:
+                undo_move = (last_move["id"], moved["from"])
         relist_of = g.conn.execute("SELECT sku FROM items WHERE relisted_as = ?", (sku,)).fetchall()
         suggestion = g.conn.execute("SELECT " + db.LATEST_SUGGESTION + " FROM items i WHERE i.sku = ?", (sku,)).fetchone()[0]
         batch_name, draft_item = drafts.get(g.conn, sku)
@@ -727,7 +734,8 @@ def _routes(app):
         return render_template("item.html", row=row, events=events, listings=item_listings, sales=item_sales,
                                statuses=db.STATUSES, parse_json=_parse_json, relist_of=relist_of,
                                relistable=db.RELISTABLE, off_ebay=row["status"] in db.OFF_EBAY,
-                               suggestion=suggestion, draft_batch=draft_batch, title_max=TITLE_MAX, photos=photos)
+                               suggestion=suggestion, draft_batch=draft_batch, title_max=TITLE_MAX, photos=photos,
+                               undo_move=undo_move)
 
     @app.route("/items/<sku>/edit", methods=["POST"])
     @login_required

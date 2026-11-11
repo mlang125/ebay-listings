@@ -374,6 +374,20 @@ check(c.post("/totes/%s/count" % T, data=MultiDict([("csrf", tok)] + [("here", x
 assert not fresh().execute("select missing_since from items where sku=?", (in_t[0],)).fetchone()[0]
 check(c.get("/totes/" + T), has=["Count items", "Last checked"])
 
+# --- undo a move from the item page ---
+U, U_TOTE = next(tuple(r) for r in fresh().execute("select i.sku, l.code from items i join locations l on l.id = i.location_id"
+                                                  " where i.status = 'LISTED' and l.kind = 'tote' order by i.sku desc limit 1"))
+check(c.post("/items/" + U, data={"csrf": tok, "tote": "Z8", "status": "LISTED"}, follow_redirects=True), has=["Moved to Z8", "Move back to " + U_TOTE])
+check(c.post("/items/" + U, data={"csrf": tok, "tote": U_TOTE}, follow_redirects=True), has=["Moved to " + U_TOTE, "Move back to Z8"])
+assert fresh().execute("select l.code from items i join locations l on l.id = i.location_id where sku=?", (U,)).fetchone()[0] == U_TOTE
+with fresh() as conn:
+    db.move(conn, U, "Z7", "cli", None)
+    db.move(conn, U, U_TOTE, "cli", None)
+    conn.execute("UPDATE items SET location_id = (SELECT id FROM locations WHERE code = 'Z8') WHERE sku = ?", (U,))
+assert "Move back" not in c.get("/items/" + U).get_data(as_text=True), "no undo once the item is somewhere else"
+with fresh() as conn:
+    conn.execute("UPDATE items SET location_id = (SELECT id FROM locations WHERE code = ?) WHERE sku = ?", (U_TOTE, U))
+
 # --- nav shows where you are ---
 for page, label in [("/items", "Items"), ("/items/MV-00005", "Items"), ("/totes", "Totes"), ("/picklist", "Pick list"), ("/checks", "Checks")]:
     current = re.findall(r'aria-current="page">([^<]+)<', c.get(page).get_data(as_text=True))
