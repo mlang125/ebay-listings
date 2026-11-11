@@ -45,6 +45,7 @@ UPLOAD_TYPES = (".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".zip")
 MAX_FAILED_SIGN_INS = 10  # per name, within LOCKOUT_MINUTES, since the last good sign-in
 LOCKOUT_MINUTES = 15
 PAGE_SIZE = 200  # rows per page on the items list
+STUCK_DAYS = 3  # a label or a packed box this old should have gone to the post office
 
 
 def create_app(db_path=None, batches_dir=None, inbox_dir=None):
@@ -337,6 +338,11 @@ def _routes(app):
         found = [
             (n("SELECT COUNT(*) FROM items i JOIN locations l ON l.id = i.location_id WHERE l.code = 'UN' AND " + on_hand),
              "in UN, waiting for a tote", url_for("items", tote="UN", status="ON_HAND")),
+            (n("SELECT COUNT(*) FROM items i WHERE i.status IN ('LABEL_PRINTED', 'PACKAGED')"
+               " AND (SELECT replace(e.at, 'T', ' ') FROM events e WHERE e.entity = 'item' AND e.entity_id = i.sku"
+               "      AND e.action = 'status' ORDER BY e.id DESC LIMIT 1)"
+               " < datetime('now', 'localtime', '-%d days')" % STUCK_DAYS),
+             "labelled or packed %d+ days ago and not shipped yet" % STUCK_DAYS, url_for("picklist")),
             (n("SELECT COUNT(*) FROM items i WHERE i.missing_since IS NOT NULL AND " + on_hand),
              "marked missing", url_for("items", status="MISSING")),
             (n("SELECT COUNT(*) FROM items WHERE status IN (?, ?, ?) AND relisted_as IS NULL", *db.RELISTABLE),

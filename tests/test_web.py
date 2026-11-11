@@ -465,6 +465,15 @@ check(c.post("/picklist/status", data=MultiDict([("csrf", tok), ("status", "LABE
       has=["%d marked label printed. 1 skipped" % len(waiting)])
 assert all(fresh().execute("select status from items where sku=?", (s,)).fetchone()[0] == "LABEL_PRINTED" for s in waiting)
 assert fresh().execute("select status from items where sku='MV-00005'").fetchone()[0] != "LABEL_PRINTED"
+
+# --- home page: labelled or packed but not shipped for days ---
+stuck = waiting[0]
+assert "days ago and not shipped" not in c.get("/").get_data(as_text=True)
+with fresh() as conn:
+    conn.execute("UPDATE events SET at = datetime('now', 'localtime', '-5 days') WHERE entity_id = ? AND action = 'status'"
+                 " AND id = (SELECT MAX(id) FROM events WHERE entity_id = ? AND action = 'status')", (stuck, stuck))
+check(c.get("/"), has=["labelled or packed 3+ days ago and not shipped yet"])
+
 check(c.get("/sales"), has=["Item sales", "By month", "By sale price", "Listed now"])
 check(c.get("/activity"), has=["Last 30 days by person", "matt", "sam", "signed in"])
 check(c.get("/activity?who=sam"), has=["merged"])
