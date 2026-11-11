@@ -213,3 +213,7 @@ nav.top form.find input { margin: 0; padding: 4px 8px; width: 11em; min-height: 
 tr.total td { font-weight: 600; border-top: 2px solid var(--line); }
 .small-photos img { height: 120px; }
 .quick-move input[name=sku] { font-size: 1.3em; }
+ul.count-list { list-style: none; padding: 0; margin: 12px 0; }
+ul.count-list li { border-bottom: 1px solid var(--line); }
+ul.count-list label { display: flex; gap: 12px; align-items: flex-start; padding: 10px 4px; cursor: pointer; }
+ul.count-list input[type=checkbox] { width: 1.4em; height: 1.4em; flex: none; margin-top: 2px; }

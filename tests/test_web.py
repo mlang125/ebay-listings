@@ -353,6 +353,27 @@ check(c.post("/drafts/upload", data={"csrf": tok, "tote": "bad tote", "photos": 
       has=["isn&#39;t a tote code"])
 assert len([d for d in os.listdir(os.path.join(S, "inbox")) if d.startswith("t5-")]) == 1
 
+# --- counting a tote ---
+T = next(r[0] for r in fresh().execute("select l.code from locations l join items i on i.location_id = l.id"
+                                       " where l.kind = 'tote' and i.status not in (?, ?) and i.missing_since is null"
+                                       " group by l.code having count(*) >= 3 order by l.code", db.GONE))
+check(c.get("/totes/%s/count" % T), has=["Count " + T, 'name="here"', "Save count"])
+in_t = db.on_hand(fresh(), T)
+outside = next(r[0] for r in fresh().execute("select i.sku from items i join locations l on l.id = i.location_id"
+                                            " where l.code <> ?"
+                                            " and i.status = 'LISTED' limit 1", (T,)))
+check(c.post("/totes/%s/count" % T, data=MultiDict([("csrf", tok), ("extra", "MV-99999")]), follow_redirects=True), has=["Unknown SKU: MV-99999"])
+assert db.on_hand(fresh(), T) == in_t, "a bad SKU changes nothing"
+check(c.post("/totes/%s/count" % T, data=MultiDict([("csrf", tok), ("extra", outside.lower())] + [("here", x) for x in in_t[1:]]),
+             follow_redirects=True), has=[T + " counted: %d here, 1 missing, 1 moved in." % (len(in_t) - 1)])
+assert fresh().execute("select missing_since from items where sku=?", (in_t[0],)).fetchone()[0], "unticked is missing"
+assert outside in db.on_hand(fresh(), T)
+assert fresh().execute("select checked_at from locations where code=?", (T,)).fetchone()[0]
+check(c.post("/totes/%s/count" % T, data=MultiDict([("csrf", tok)] + [("here", x) for x in db.on_hand(fresh(), T)]),
+             follow_redirects=True), has=["1 found again"])
+assert not fresh().execute("select missing_since from items where sku=?", (in_t[0],)).fetchone()[0]
+check(c.get("/totes/" + T), has=["Count items", "Last checked"])
+
 # --- nav shows where you are ---
 for page, label in [("/items", "Items"), ("/items/MV-00005", "Items"), ("/totes", "Totes"), ("/picklist", "Pick list"), ("/checks", "Checks")]:
     current = re.findall(r'aria-current="page">([^<]+)<', c.get(page).get_data(as_text=True))

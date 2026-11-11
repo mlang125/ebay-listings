@@ -7,6 +7,7 @@
   <form method="post" action="{{ url_for('tote_checked', code=code) }}" class="inline actions">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <span class="muted small">{% if checked %}Last checked {{ checked.at[:10] }} by {{ checked.name or '?' }}{% else %}Never checked{% endif %}</span>
+    <a href="{{ url_for('tote_count', code=code) }}">Count items</a>
     <button>I checked this tote</button>
     <a href="{{ url_for('labels', codes=code) }}">Print label</a>
   </form>

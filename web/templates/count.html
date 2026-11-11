@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Count {{ code }}{% endblock %}
+{% block body %}
+<h1>Count {{ code }} <span class="muted">{{ rows|length }} on record</span></h1>
+<p class="muted">Tick each item you find. When you save, anything not ticked is marked missing (it stays in {{ code }}),
+  and {{ code }} is recorded as checked.</p>
+<form method="post" class="count">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <ul class="count-list">
+    {% for r in rows %}
+    <li><label>
+      <input type="checkbox" name="here" value="{{ r.sku }}">
+      <span><strong>{{ r.sku }}</strong>{% if r.missing_since %} <span class="tag needs-work">missing</span>{% endif %}
+        {% if r.status != 'LISTED' %} <span class="tag">{{ r.status|replace('_', ' ')|lower }}</span>{% endif %}<br>
+        <span class="small">{{ r.title }}</span></span>
+    </label></li>
+    {% else %}
+    <li class="muted">Nothing on record in {{ code }}.</li>
+    {% endfor %}
+  </ul>
+  <label>Found something else in {{ code }}? <span class="muted">SKUs, separated by spaces; they move here</span>
+    <input name="extra" placeholder="MV-00012 920" autocapitalize="characters" autocomplete="off"></label>
+  <p class="row"><button class="primary">Save count</button> <a href="{{ url_for('tote', code=code) }}">Cancel</a>
+    <span class="muted small" id="ticked"></span></p>
+</form>
+<script>
+  // Running count of ticked items, so you know where you are in a big tote.
+  const boxes = document.querySelectorAll('input[name=here]'), out = document.getElementById('ticked');
+  const show = () => out.textContent = [...boxes].filter(b => b.checked).length + ' of ' + boxes.length + ' ticked';
+  boxes.forEach(b => b.addEventListener('change', show)); show();
+</script>
+{% endblock %}

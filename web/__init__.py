@@ -249,7 +249,7 @@ def _routes(app):
     # Which nav link a page belongs to, so the nav can show where you are.
     SECTIONS = {"drafts_index": "drafts", "upload": "drafts", "batch": "drafts", "draft": "drafts",
                 "items": "items", "item": "items", "item_edit": "items",
-                "totes": "totes", "tote": "totes", "consolidate": "totes", "labels": "totes",
+                "totes": "totes", "tote": "totes", "tote_count": "totes", "consolidate": "totes", "labels": "totes",
                 "quick_move": "move", "picklist": "picklist", "relists": "relists", "checks": "checks",
                 "sales_page": "sales", "activity": "activity", "users": "users", "home": "home"}
 
@@ -974,6 +974,47 @@ def _routes(app):
         made = [{"code": c, "url": base + url_for("tote", code=c), "qr": _qr_svg(base + url_for("tote", code=c)),
                  "count": len(db.on_hand(g.conn, c))} for c in codes]
         return render_template("labels.html", labels=made, base=base, label_url_set=bool(config.LABEL_URL))
+
+    @app.route("/totes/<code>/count", methods=["GET", "POST"])
+    @login_required
+    def tote_count(code):
+        """Go through a tote with a phone: tick what's there. Unticked items become missing, ticked
+        ones are found, extra SKUs typed in move here, and the tote is recorded as checked."""
+        code = db.check_code(code)
+        if request.method == "POST":
+            here = set(request.form.getlist("here"))
+            extra = [_sku(s) for s in re.split(r"[\s,]+", request.form.get("extra", "")) if s.strip()]
+            unknown = [s for s in extra if not g.conn.execute("SELECT 1 FROM items WHERE sku = ?", (s,)).fetchone()]
+            if unknown:
+                flash("Unknown SKU: %s. Nothing was changed." % ", ".join(unknown), "error")
+                return redirect(url_for("tote_count", code=code))
+            with g.conn:
+                listed = db.on_hand(g.conn, code)
+                was_missing = {r[0] for r in g.conn.execute(
+                    "SELECT sku FROM items WHERE missing_since IS NOT NULL AND sku IN (%s)" % ",".join("?" * len(listed)),
+                    listed)} if listed else set()
+                for sku in listed:
+                    db.set_missing(g.conn, sku, sku not in here, "web", g.user["id"], note="tote count")
+                moved = [s for s in extra if s not in listed]
+                for sku in moved:
+                    db.move(g.conn, sku, code, "web", g.user["id"])
+                    db.set_missing(g.conn, sku, False, "web", g.user["id"], note="tote count")
+                db.mark_checked(g.conn, code, "web", g.user["id"])
+            missing = [s for s in listed if s not in here]
+            parts = ["%d here" % (len(listed) - len(missing))]
+            if missing:
+                new = len([s for s in missing if s not in was_missing])
+                parts.append("%d missing%s" % (len(missing), " (%d new)" % new if new < len(missing) else ""))
+            found = [s for s in listed if s in here and s in was_missing]
+            if found:
+                parts.append("%d found again" % len(found))
+            if moved:
+                parts.append("%d moved in" % len(moved))
+            flash("%s counted: %s." % (code, ", ".join(parts)), "ok")
+            return redirect(url_for("tote", code=code))
+        rows = g.conn.execute(ITEMS_SQL + " WHERE l.code = ? AND i.status NOT IN (?, ?) ORDER BY i.sku",
+                              (code, *db.GONE)).fetchall()
+        return render_template("count.html", code=code, rows=rows)
 
     @app.route("/totes/<code>/checked", methods=["POST"])
     @login_required
