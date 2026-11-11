@@ -407,6 +407,8 @@ check(c.get("/totes?unchecked=1"), has=['href="/totes/%s/count"' % never])
 page = c.get("/totes/" + T).get_data(as_text=True)
 assert "Print contents" in page and '<div class="grid noprint">' in page and '<details class="noprint">' in page
 
+assert c.get("/totes/not-a-tote/count").status_code == 404
+
 # --- nav shows where you are ---
 for page, label in [("/items", "Items"), ("/items/MV-00005", "Items"), ("/totes", "Totes"), ("/picklist", "Pick list"), ("/checks", "Checks")]:
     current = re.findall(r'aria-current="page">([^<]+)<', c.get(page).get_data(as_text=True))
@@ -440,8 +442,12 @@ assert kim.get("/").status_code == 302, "a turned-off account is signed out"
 check(c.post("/users", data={"csrf": tok, "action": "disable", "name": "matt"}, follow_redirects=True), has=["your own account"])
 check(c.post("/users", data={"csrf": tok, "action": "role", "name": "matt", "role": "lister"}, follow_redirects=True), has=["your own admin role"])
 check(c.post("/users", data={"csrf": tok, "action": "enable", "name": "kim"}, follow_redirects=True), has=["back on"])
-check(c.post("/users", data={"csrf": tok, "action": "password", "name": "kim", "password": "newkimpass1"}, follow_redirects=True), has=["New password set"])
+kim, ktok = sign_in("kim", "kimpass123")
+check(c.post("/users", data={"csrf": tok, "action": "password", "name": "kim", "password": "newkimpass1"}, follow_redirects=True), has=["New password set", "signed out everywhere"])
+assert kim.get("/").status_code == 302, "a new password signs the old session out"
 sign_in("kim", "newkimpass1")
+check(c.post("/users", data={"csrf": tok, "action": "password", "name": "matt", "password": "testpass123"}, follow_redirects=True), has=["New password set for matt"])
+assert c.get("/").status_code == 200, "changing your own password keeps you signed in here"
 assert [r[0] for r in fresh().execute("select action from events where entity = 'user' and entity_id = 'kim' and action like 'user_%' order by id")] == ["user_add", "user_disable", "user_enable", "user_password"]
 
 # --- shipping, numbers, activity ---

@@ -7,6 +7,7 @@ database. Every change is recorded under the signed-in person. Run it with `cli.
 import csv
 import datetime
 import functools
+import hashlib
 import io
 import json
 import os
@@ -209,6 +210,12 @@ def sort_mark(key):
 # --- request plumbing ----------------------------------------------------------
 
 
+def _password_mark(password_hash):
+    """A short fingerprint of a user's password hash, kept in their session.
+    Setting a new password changes it, which signs that person out everywhere."""
+    return hashlib.sha256((password_hash or "").encode()).hexdigest()[:16]
+
+
 def login_required(view):
     @functools.wraps(view)
     def wrapped(*args, **kwargs):
@@ -235,6 +242,8 @@ def _routes(app):
             g.user = g.conn.execute(
                 "SELECT * FROM users WHERE id = ? AND active = 1", (session["user_id"],)
             ).fetchone()
+            if g.user is not None and session.get("pw") != _password_mark(g.user["password_hash"]):
+                g.user = None  # password changed since this sign-in
         if "csrf" not in session:
             session["csrf"] = secrets.token_hex(16)
         if request.method == "POST" and request.form.get("csrf") != session["csrf"]:
@@ -283,6 +292,7 @@ def _routes(app):
                 session.clear()
                 session.permanent = True
                 session["user_id"] = row["id"]
+                session["pw"] = _password_mark(row["password_hash"])
                 nxt = request.args.get("next", "")
                 return redirect(nxt if nxt.startswith("/") and not nxt.startswith("//") else url_for("home"))
             with g.conn:
@@ -993,7 +1003,10 @@ def _routes(app):
     def tote_count(code):
         """Go through a tote with a phone: tick what's there. Unticked items become missing, ticked
         ones are found, extra SKUs typed in move here, and the tote is recorded as checked."""
-        code = db.check_code(code)
+        try:
+            code = db.check_code(code)
+        except ValueError:
+            abort(404)
         if request.method == "POST":
             here = set(request.form.getlist("here"))
             extra = [_sku(s) for s in re.split(r"[\s,]+", request.form.get("extra", "")) if s.strip()]
@@ -1123,9 +1136,11 @@ def _routes(app):
                         if action == "password":
                             if len(password) < 8:
                                 raise ValueError("Passwords need at least 8 characters.")
-                            g.conn.execute("UPDATE users SET password_hash = ? WHERE id = ?",
-                                           (generate_password_hash(password), target["id"]))
-                            done = "New password set for %s." % name
+                            new_hash = generate_password_hash(password)
+                            g.conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, target["id"]))
+                            if target["id"] == g.user["id"]:
+                                session["pw"] = _password_mark(new_hash)  # stay signed in here
+                            done = "New password set for %s. They're signed out everywhere else." % name
                         elif action in ("disable", "enable"):
                             if target["id"] == g.user["id"]:
                                 raise ValueError("You can't turn off your own account.")
