@@ -208,7 +208,7 @@ ul.attention a strong { display: inline-block; min-width: 2.5em; color: var(--ac
   table.itemrows tbody { display: block; }
   table.itemrows tr { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 8px 10px; margin-bottom: 8px;
                       background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
-  table.itemrows tr:first-child { background: none; border: 0; padding: 0 2px; margin-bottom: 4px; gap: 4px 14px; }
+  table.itemrows tr:has(th) { background: none; border: 0; padding: 0 2px; margin-bottom: 4px; gap: 4px 14px; }
   table.itemrows th, table.itemrows td { border: 0; padding: 0; }
   table.itemrows td.title { flex-basis: 100%; order: 5; }
   table.itemrows td:has(input.tote-input) { order: 6; }
