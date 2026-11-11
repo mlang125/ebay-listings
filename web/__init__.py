@@ -632,6 +632,7 @@ def _routes(app):
         step = request.values.get("step", "PACKAGED")
         if step not in PACK_STEPS:
             abort(400)
+        box = request.values.get("box", "").strip()[:40] if step == "PACKAGED" else ""
         if request.method == "POST":
             sku = _sku(request.form.get("sku"))
             waiting = {r["sku"]: r for r in orders.pick_list(g.conn)}
@@ -643,11 +644,14 @@ def _routes(app):
                 flash("%s is already %s." % (sku, PACK_STEPS[step].lower()), "ok")
             else:
                 with g.conn:
-                    db.set_status(g.conn, sku, step, "web", g.user["id"])
-                flash("%s %s: %s" % (sku, PACK_STEPS[step].lower(), waiting[sku]["title"]), "ok")
-            return redirect(url_for("pack", step=step))
+                    db.set_status(g.conn, sku, step, "web", g.user["id"], data={"package": box} if box else None)
+                flash("%s %s%s: %s" % (sku, PACK_STEPS[step].lower(), " in " + box if box else "", waiting[sku]["title"]), "ok")
+            return redirect(url_for("pack", step=step, box=box or None))
         left = [r for r in orders.pick_list(g.conn) if r["status"] != step]
-        return render_template("pack.html", step=step, steps=PACK_STEPS, left=left)
+        boxes = [r[0] for r in g.conn.execute(
+            "SELECT json_extract(data, '$.package') AS p FROM events WHERE action = 'status' AND to_status = 'PACKAGED'"
+            " AND p IS NOT NULL GROUP BY p ORDER BY COUNT(*) DESC LIMIT 20")]
+        return render_template("pack.html", step=step, steps=PACK_STEPS, left=left, box=box, boxes=boxes)
 
     @app.route("/find")
     @login_required

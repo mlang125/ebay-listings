@@ -431,6 +431,11 @@ check(c.post("/pack", data={"csrf": tok, "step": "PACKAGED", "sku": "MV-00005"},
 check(c.post("/pack", data={"csrf": tok, "step": "PACKAGED", "sku": "99999"}, follow_redirects=True), has=["no such item"])
 assert c.post("/pack", data={"csrf": tok, "step": "DELIVERED", "sku": pack_sku}).status_code == 400
 check(c.get("/picklist"), has=["Pack by SKU"])
+pack2 = next(r["sku"] for r in orders.pick_list(fresh()) if r["status"] != "PACKAGED")
+r = c.post("/pack", data={"csrf": tok, "step": "PACKAGED", "box": "Poly mailer 10x13", "sku": pack2})
+assert "box=Poly" in r.headers["Location"], "the box stays filled in"
+check(c.get(r.headers["Location"]), has=[pack2 + " packed in Poly mailer 10x13", '<option value="Poly mailer 10x13">'])
+assert json.loads(fresh().execute("select data from events where entity_id=? and to_status='PACKAGED' order by id desc", (pack2,)).fetchone()[0]) == {"package": "Poly mailer 10x13"}
 
 # --- nav shows where you are ---
 for page, label in [("/items", "Items"), ("/items/MV-00005", "Items"), ("/totes", "Totes"), ("/picklist", "Pick list"), ("/checks", "Checks")]:

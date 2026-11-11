@@ -8,6 +8,11 @@
   <div class="row">
     <label>Mark as <select name="step" onchange="location = '?step=' + this.value">
       {% for s, label in steps.items() %}<option value="{{ s }}" {% if s == step %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+    {% if step == 'PACKAGED' %}
+    <label>Box or mailer <span class="muted">(optional)</span>
+      <input name="box" value="{{ box }}" list="boxes" size="12" placeholder="e.g. 12x9x6 box" autocomplete="off"></label>
+    <datalist id="boxes">{% for b in boxes %}<option value="{{ b }}">{% endfor %}</datalist>
+    {% endif %}
     <label class="grow">SKU <input name="sku" autocomplete="off" placeholder="920, MV-00920 or scan a sticker" required autofocus></label>
     <button class="primary">Mark</button>
   </div>

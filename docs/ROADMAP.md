@@ -190,7 +190,7 @@ Work items:
       *today + tomorrow*, and *within 2 days*, based on eBay's ship-by date. Printable.
 - [ ] **Label detection (Stage A):** order sync notices new tracking numbers and marks
       LABEL_PRINTED (by "eBay labels" when we don't know who printed it).
-- [x] **Packing station:** scan or click to mark items PACKAGED and SENT_TO_POST_OFFICE (`/pack`; package type not recorded yet).
+- [x] **Packing station:** scan or click to mark items PACKAGED and SENT_TO_POST_OFFICE (`/pack`, with an optional box or mailer recorded on each packed item).
       Record who did it and which package type was used.
 - [x] **SKU stickers:** (QR code to the item's page, from the web app) a small barcode label printed at listing time for each item or
       tote, so scanning replaces typing.
