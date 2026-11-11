@@ -246,10 +246,18 @@ def _routes(app):
         if conn is not None:
             conn.close()
 
+    # Which nav link a page belongs to, so the nav can show where you are.
+    SECTIONS = {"drafts_index": "drafts", "upload": "drafts", "batch": "drafts", "draft": "drafts",
+                "items": "items", "item": "items", "item_edit": "items",
+                "totes": "totes", "tote": "totes", "consolidate": "totes", "labels": "totes",
+                "quick_move": "move", "picklist": "picklist", "relists": "relists", "checks": "checks",
+                "sales_page": "sales", "activity": "activity", "users": "users", "home": "home"}
+
     @app.context_processor
     def helpers():
         return {"csrf": session.get("csrf"), "env": config.ENV, "read_only": config.READ_ONLY, "money": _money_fmt,
-                "sort_url": sort_url, "sort_mark": sort_mark, "event_details": event_details}
+                "sort_url": sort_url, "sort_mark": sort_mark, "event_details": event_details,
+                "section": SECTIONS.get(request.endpoint)}
 
     # --- sign in ---
 

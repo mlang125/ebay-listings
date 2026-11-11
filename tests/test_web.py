@@ -353,6 +353,11 @@ check(c.post("/drafts/upload", data={"csrf": tok, "tote": "bad tote", "photos": 
       has=["isn&#39;t a tote code"])
 assert len([d for d in os.listdir(os.path.join(S, "inbox")) if d.startswith("t5-")]) == 1
 
+# --- nav shows where you are ---
+for page, label in [("/items", "Items"), ("/items/MV-00005", "Items"), ("/totes", "Totes"), ("/picklist", "Pick list"), ("/checks", "Checks")]:
+    current = re.findall(r'aria-current="page">([^<]+)<', c.get(page).get_data(as_text=True))
+    assert current == [label], (page, current)
+
 # --- data checks ---
 conn = fresh()
 saved = [tuple(r) for r in conn.execute("SELECT sku, title, status, price FROM items WHERE sku IN ('MV-00005', 'MV-01385')")]
