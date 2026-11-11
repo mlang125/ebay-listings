@@ -39,7 +39,9 @@ docs/ROADMAP.md has the plan.
 
 Real inventory and order history are loaded (see `cli.py items`, `cli.py sales`). Totes are
 `<letter><number>`; `OT` = other place, `UN` = needs a tote. Drafts live in the `drafts` table
-(JSON per SKU). The Claude API drafter (`ebay/drafter.py`) is tested (Opus 5.5 is best, about
+(JSON per SKU). Photos uploaded in the web app land in `inbox/<tote>-<date>/` (numbered in upload
+order; `batches.source = 'upload'`). Drafting one means: split at the whiteboard divider photos, write
+`batches/<batch>/drafts.json` plus `batches/<batch>/photos/`, then `cli.py import-drafts <batch>`. The Claude API drafter (`ebay/drafter.py`) is tested (Opus 5.5 is best, about
 $0.10/item) but not wired into a real workflow yet.
 
 ## Unattended work (owner away, 2026-11-10)
