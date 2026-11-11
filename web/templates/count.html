@@ -19,7 +19,7 @@
     {% endfor %}
   </ul>
   <label>Found something else in {{ code }}? <span class="muted">SKUs, separated by spaces; they move here</span>
-    <input name="extra" placeholder="MV-00012 920" autocapitalize="characters" autocomplete="off"></label>
+    <input name="extra" placeholder="MV-00012 920" autocapitalize="characters" autocomplete="off" enterkeyhint="next"></label>
   <p class="row"><button class="primary">Save count</button> <a href="{{ url_for('tote', code=code) }}">Cancel</a>
     <span class="muted small" id="ticked"></span></p>
 </form>
@@ -28,5 +28,9 @@
   const boxes = document.querySelectorAll('input[name=here]'), out = document.getElementById('ticked');
   const show = () => out.textContent = [...boxes].filter(b => b.checked).length + ' of ' + boxes.length + ' ticked';
   boxes.forEach(b => b.addEventListener('change', show)); show();
+  // Enter in the SKU box adds a space instead of saving the count halfway through a tote.
+  document.querySelector('input[name=extra]').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); if (!e.target.value.endsWith(' ')) e.target.value += ' '; }
+  });
 </script>
 {% endblock %}
