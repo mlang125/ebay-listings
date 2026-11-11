@@ -124,7 +124,7 @@ The base that everything else builds on.
       orders and order_lines; `inventory.csv` and the drafts imported. Shipments, expenses and
       sourcing lots get added as migrations when their phase starts.
 - [x] Import the 916 active listings with their totes from the tracking sheet (2026-11-08).
-- [ ] **Import past sales.** This step makes the database the real
+- [x] **Import past sales** (all orders, 2026-11-09). This step makes the database the real
       source of truth. Floaro SKUs (`<tote>-#####`) contain the tote, so it can be filled in
       automatically. Anything without one gets tote *unknown* and is assigned when found.
 - [x] `users` table and `CLI_USER`. Web login comes with the GUI in Phase 1.
@@ -136,7 +136,7 @@ The base that everything else builds on.
 
 So someone other than me can take a tote from photos to live listings.
 
-- [ ] **New batch:** choose a tote, then upload photos from a phone or laptop (or drop in a zip).
+- [x] **New batch:** choose a tote, then upload photos from a phone or laptop (or drop in a zip).
       The divider-photo convention stays the same.
 - [x] **Web app** (`cli.py serve`): sign-in per person, drafts review queue with photos, editor,
       price estimate, publish (single or all ready), items search and history, totes with move/merge,
@@ -147,6 +147,10 @@ So someone other than me can take a tote from photos to live listings.
       over as `drafts.json`, loaded with `cli.py import-drafts`.
 - [x] **Every change records who made it** (web sign-in or `CLI_USER`), with an Activity page.
 - [x] Relist links for cancelled/returned items; *Missing*/*Found* flags and optional tote checks.
+- [x] **Inventory tools** (branch `auto/improvements`, 2026-11-10): sortable tables, item filters with
+      age and last change, bulk move/missing/status/price drop, a "needs attention" home page with a Today
+      card, tote labels with QR codes, tote counts (tick what's there), printable tote contents, record
+      checks, item edits with history and *Move back*, a People page with roles, and phone layouts.
 - [x] Sales numbers page (`/sales`, `cli.py sales`). Days-to-sell waits for reliable listing dates. Claude Code (terminal) writes them there for now;
       the GUI never depends on how a draft was produced.
 - [ ] **API drafter (when it's worth it):** the app splits the photos, sends each item to the
@@ -182,7 +186,7 @@ pick list, statuses, and analytics stay the same throughout.
 
 Work items:
 
-- [ ] **Pick list:** sold items grouped by tote, with filters for *due today*,
+- [x] **Pick list:** sold items grouped by tote, with filters for *due today*,
       *today + tomorrow*, and *within 2 days*, based on eBay's ship-by date. Printable.
 - [ ] **Label detection (Stage A):** order sync notices new tracking numbers and marks
       LABEL_PRINTED (by "eBay labels" when we don't know who printed it).
