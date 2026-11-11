@@ -437,6 +437,14 @@ assert "box=Poly" in r.headers["Location"], "the box stays filled in"
 check(c.get(r.headers["Location"]), has=[pack2 + " packed in Poly mailer 10x13", '<option value="Poly mailer 10x13">'])
 assert json.loads(fresh().execute("select data from events where entity_id=? and to_status='PACKAGED' order by id desc", (pack2,)).fetchone()[0]) == {"package": "Poly mailer 10x13"}
 
+# --- item page: step through the tote ---
+in_tote = db.on_hand(fresh(), T)
+page = c.get("/items/" + in_tote[1]).get_data(as_text=True)
+assert "2 of %d in %s" % (len(in_tote), T) in page and '"/items/%s" rel="prev"' % in_tote[0] in page, page[:200]
+if len(in_tote) > 2:
+    assert '"/items/%s" rel="next"' % in_tote[2] in page
+assert 'rel="prev"' not in c.get("/items/" + in_tote[0]).get_data(as_text=True)
+
 # --- nav shows where you are ---
 for page, label in [("/items", "Items"), ("/items/MV-00005", "Items"), ("/totes", "Totes"), ("/picklist", "Pick list"), ("/checks", "Checks")]:
     current = re.findall(r'aria-current="page">([^<]+)<', c.get(page).get_data(as_text=True))

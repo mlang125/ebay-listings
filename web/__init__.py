@@ -773,6 +773,14 @@ def _routes(app):
             " WHERE ol.sku = ? ORDER BY o.created_at DESC",
             (sku,),
         ).fetchall()
+        # Neighbours in the same tote (items still on hand, by SKU), for stepping through a tote.
+        siblings = [r[0] for r in g.conn.execute(
+            "SELECT i.sku FROM items i WHERE i.location_id = (SELECT location_id FROM items WHERE sku = ?)"
+            " AND i.status NOT IN (?, ?) ORDER BY i.sku", (sku, *db.GONE))] if row["tote"] else []
+        at = siblings.index(sku) if sku in siblings else None
+        neighbours = (siblings[at - 1] if at else None,
+                      siblings[at + 1] if at is not None and at + 1 < len(siblings) else None,
+                      at + 1 if at is not None else None, len(siblings))
         # The last move can be undone while the item is still where that move put it.
         last_move = next((e for e in events if e["action"] == "moved"), None)
         undo_move = None
@@ -790,7 +798,7 @@ def _routes(app):
                                statuses=db.STATUSES, parse_json=_parse_json, relist_of=relist_of,
                                relistable=db.RELISTABLE, off_ebay=row["status"] in db.OFF_EBAY,
                                suggestion=suggestion, draft_batch=draft_batch, title_max=TITLE_MAX, photos=photos,
-                               undo_move=undo_move)
+                               undo_move=undo_move, neighbours=neighbours)
 
     @app.route("/items/<sku>/edit", methods=["POST"])
     @login_required
