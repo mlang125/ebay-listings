@@ -388,6 +388,11 @@ assert "Move back" not in c.get("/items/" + U).get_data(as_text=True), "no undo 
 with fresh() as conn:
     conn.execute("UPDATE items SET location_id = (SELECT id FROM locations WHERE code = ?) WHERE sku = ?", (U_TOTE, U))
 
+# --- items page shows what the matching items are worth ---
+worth = fresh().execute("select sum(price * max(quantity, 1)) from items where status = 'LISTED'").fetchone()[0]
+check(c.get("/items?status=LISTED"), has=["Not yet shipped: $%s at current prices" % "{:,.2f}".format(worth)])
+assert "Not yet shipped" not in c.get("/items?status=SENT_TO_POST_OFFICE").get_data(as_text=True)
+
 # --- nav shows where you are ---
 for page, label in [("/items", "Items"), ("/items/MV-00005", "Items"), ("/totes", "Totes"), ("/picklist", "Pick list"), ("/checks", "Checks")]:
     current = re.findall(r'aria-current="page">([^<]+)<', c.get(page).get_data(as_text=True))

@@ -3,6 +3,7 @@
 {% from "_macros.html" import th, tick, tick_all, bulk_bar with context %}
 {% block body %}
 <h1>Items <span class="muted">{{ total }}{% if filtered %} found{% endif %}</span></h1>
+{% if value %}<p class="muted small">Not yet shipped: {{ money(value) }} at current prices{% if unpriced %} ({{ unpriced }} with no price){% endif %}.</p>{% endif %}
 <form class="filters">
   <input name="q" value="{{ f.q }}" placeholder="SKU or words in the title" {% if not filtered %}autofocus{% endif %}>
   <select name="status" aria-label="Status">

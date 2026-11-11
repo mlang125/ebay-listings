@@ -650,7 +650,11 @@ def _routes(app):
     @login_required
     def items():
         sql, params, f = _item_filters()
-        total = g.conn.execute("SELECT COUNT(*) FROM (%s)" % sql, params).fetchone()[0]
+        # Value counts only what's still here: shipped items' prices are sales, not stock.
+        total, value, unpriced = g.conn.execute(
+            "SELECT COUNT(*), SUM(CASE WHEN status NOT IN (?, ?) THEN price * MAX(quantity, 1) END),"
+            " COUNT(CASE WHEN status NOT IN (?, ?) AND price IS NULL THEN 1 END) FROM (%s)" % sql,
+            [*db.GONE, *db.GONE] + params).fetchone()
         pages = max(1, -(-total // PAGE_SIZE))
         page = min(max(request.args.get("page", 1, type=int), 1), pages)
         rows = g.conn.execute(sql + order_by(ITEM_SORTS, "sku", default_desc=True) + " LIMIT ? OFFSET ?",
@@ -660,7 +664,7 @@ def _routes(app):
             " ORDER BY l.kind = 'place', substr(l.code, 1, 1), CAST(substr(l.code, 2) AS INTEGER)")]
         args = request.args.to_dict()
         args.pop("page", None)
-        return render_template("items.html", rows=rows, total=total, f=f, statuses=db.STATUSES, totes=totes,
+        return render_template("items.html", rows=rows, total=total, value=value, unpriced=unpriced, f=f, statuses=db.STATUSES, totes=totes,
                                filtered=any(f.values()), suggestion=db.suggest_tote(g.conn),
                                page=page, pages=pages, first=(page - 1) * PAGE_SIZE + 1, args=args)
 
