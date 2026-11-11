@@ -324,6 +324,18 @@ html = check(c.get("/totes/" + FREE), has=["Recent changes", "split", "checked",
 assert "to: T9" in html or "T9" in html
 html = check(c.get("/totes/W9"), has=["Recent changes", "moved", "to: W9", "to: W8"])
 
+# --- quick move ---
+check(c.get("/move"), has=["Quick move", 'name="tote"'])
+un_item = db.on_hand(fresh(), "UN")[0]
+num = str(int(un_item[3:]))
+check(c.post("/move", data={"csrf": tok, "tote": "q3", "sku": num}, follow_redirects=True),
+      has=["%s → Q3 (was UN)" % un_item, "You moved into Q3", 'value="Q3"'])
+assert un_item in db.on_hand(fresh(), "Q3")
+check(c.post("/move", data={"csrf": tok, "tote": "Q3", "sku": un_item.lower()}, follow_redirects=True), has=["already in Q3"])
+check(c.post("/move", data={"csrf": tok, "tote": "Q3", "sku": "99999"}, follow_redirects=True), has=["No item MV-99999"])
+check(c.post("/move", data={"csrf": tok, "tote": "nope", "sku": num}, follow_redirects=True), has=["isn&#39;t a tote code"])
+assert c.get("/find?q=mv920").location.endswith("/items/MV-00920")
+
 # --- shipping, numbers, activity ---
 check(c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "PACKAGED", "days": ""}, follow_redirects=True), has=["packaged"])
 assert c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "DELIVERED"}).status_code == 400

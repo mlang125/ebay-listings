@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Quick move{% endblock %}
+{% block body %}
+<h1>Quick move</h1>
+<p class="muted">Pick the tote you're filling, then enter each item's SKU (the number alone works). The tote stays filled in.</p>
+<datalist id="codes">{% for c in codes %}<option value="{{ c }}">{% endfor %}<option value="{{ suggestion }}">next free</option></datalist>
+<form method="post" class="card quick-move">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="row">
+    <label>Into tote <input name="tote" value="{{ tote }}" list="codes" required autocapitalize="characters" {% if not tote %}autofocus{% endif %}></label>
+    <label class="grow">SKU <input name="sku" inputmode="numeric" autocomplete="off" placeholder="920 or MV-00920" required {% if tote %}autofocus{% endif %}></label>
+    <button class="primary">Move</button>
+  </div>
+</form>
+{% if tote %}
+<p><a href="{{ url_for('tote', code=tote) }}">Open {{ tote }}</a></p>
+{% if recent %}
+<h2>You moved into {{ tote }} (last 12 hours)</h2>
+<table>
+  {% for r in recent %}
+  <tr><td class="nowrap small">{{ r.at[11:16] }}</td><td class="nowrap"><a href="{{ url_for('item', sku=r.sku) }}">{{ r.sku }}</a></td><td>{{ r.title }}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+{% endif %}
+{% endblock %}

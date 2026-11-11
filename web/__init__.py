@@ -454,17 +454,52 @@ def _routes(app):
 
     # --- items and totes ---
 
+    def _sku(text):
+        """A SKU from what someone typed: 'MV-00920', 'mv920' or just '920'."""
+        text = (text or "").strip().upper()
+        if re.fullmatch(r"\d{1,5}", text):
+            return "MV-%05d" % int(text)
+        if re.fullmatch(r"MV-?\d{1,5}", text):
+            return "MV-%05d" % int(text.replace("MV", "").strip("-"))
+        return text
+
+    @app.route("/move", methods=["GET", "POST"])
+    @login_required
+    def quick_move():
+        """Binning on a phone: the tote stays filled in, type SKU after SKU."""
+        tote = request.values.get("tote", "").strip().upper()
+        if request.method == "POST":
+            sku = _sku(request.form.get("sku"))
+            try:
+                tote = db.check_code(tote)
+                row = g.conn.execute(ITEMS_SQL + " WHERE i.sku = ?", (sku,)).fetchone()
+                if row is None:
+                    raise ValueError("No item %s." % (sku or "(empty)"))
+                if row["tote"] == tote:
+                    flash("%s is already in %s." % (sku, tote), "ok")
+                else:
+                    with g.conn:
+                        db.move(g.conn, sku, tote, "web", g.user["id"])
+                    flash("%s → %s (was %s): %s" % (sku, tote, row["tote"] or "unknown", row["title"]), "ok")
+            except ValueError as e:
+                flash(str(e), "error")
+            return redirect(url_for("quick_move", tote=tote))
+        recent = g.conn.execute(
+            "SELECT e.entity_id AS sku, e.at, i.title FROM events e JOIN items i ON i.sku = e.entity_id"
+            " WHERE e.action = 'moved' AND e.user_id = ? AND json_extract(e.data, '$.to') = ? AND e.at >= ?"
+            " ORDER BY e.id DESC LIMIT 30",
+            (g.user["id"], tote, (datetime.datetime.now() - datetime.timedelta(hours=12)).isoformat(timespec="seconds")),
+        ).fetchall() if tote else []
+        return render_template("move.html", tote=tote, recent=recent,
+                               codes=sorted(db.totes_in_use(g.conn) | set(db.PLACES)), suggestion=db.suggest_tote(g.conn))
+
     @app.route("/find")
     @login_required
     def find():
         """The search box in the top bar: a SKU (or just its number) opens the item, a tote code opens
         the tote, anything else searches item titles."""
         q = request.args.get("q", "").strip()
-        sku = q.upper()
-        if re.fullmatch(r"\d{1,5}", q):
-            sku = "MV-%05d" % int(q)
-        elif re.fullmatch(r"MV-?\d{1,5}", sku):
-            sku = "MV-%05d" % int(sku.replace("MV", "").strip("-"))
+        sku = _sku(q)
         if g.conn.execute("SELECT 1 FROM items WHERE sku = ?", (sku,)).fetchone():
             return redirect(url_for("item", sku=sku))
         if q.upper() in db.PLACES or db.TOTE_CODE_RE.match(q.upper()) and q.upper() in db.totes_in_use(g.conn):
