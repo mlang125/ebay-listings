@@ -417,7 +417,7 @@ check(c.get("/activity"), has=["By week", "(this week)", "Labels printed", "Ship
 # --- SKU stickers ---
 check(c.get("/stickers?sku=MV-00005&skus=920+mv-99999"), has=["SKU stickers", "MV-00005", "MV-00920", '<svg', "Unknown SKU: MV-99999"])
 assert c.get("/stickers?sku=MV-00005").get_data(as_text=True).count('class="sticker"') == 1
-check(c.get("/items"), has=['formaction="/stickers"'])
+check(c.get("/items"), has=['data-stickers="/stickers"'])
 check(c.get("/items/MV-00005"), has=["Print a SKU sticker"])
 
 # --- packing station ---

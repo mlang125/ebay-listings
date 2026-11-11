@@ -33,7 +33,7 @@
     <button formaction="{{ url_for('items_bulk') }}" name="action" value="drop">Suggest % lower price</button>
   </span>
   <span class="bulk-group">
-    <button formaction="{{ url_for('stickers') }}" formmethod="get" formtarget="_blank">Stickers</button>
+    <button type="button" data-stickers="{{ url_for('stickers') }}" onclick="openStickers(this)">Stickers</button>
   </span>
   <span class="bulk-group">
     <select name="status" aria-label="New status"><option value="">Status…</option>
@@ -44,6 +44,12 @@
   </span>
 </div>
 <script>
+  // Only the ticked SKUs go in the address (not the whole form, which holds the form token).
+  function openStickers(button) {
+    var skus = Array.prototype.map.call(button.form.querySelectorAll('input[name=sku]:checked'), function (b) { return b.value; });
+    if (!skus.length) { alert('Tick at least one item first.'); return; }
+    window.open(button.dataset.stickers + '?skus=' + encodeURIComponent(skus.join(' ')), '_blank');
+  }
   function bulkCount(form) {
     var n = form.querySelectorAll('input[name=sku]:checked').length;
     form.querySelector('.bulk-count').textContent = n ? n + ' ticked' : 'No items ticked';
