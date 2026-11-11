@@ -545,6 +545,12 @@ check(c.post("/listings/check", data={"csrf": tok}, follow_redirects=True), has=
 listed_one = fresh().execute("select sku from items where status = 'LISTED' and quantity = 1 limit 1").fetchone()[0]
 check(c.get("/items/" + listed_one), has=["Still listed</td><td>1 unit\n"])
 
+# --- the 4x6 tote label style never leaks into other pages (it once drew the Sales captions as labels) ---
+css = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web", "static", "style.css")).read()
+assert not re.search(r"^\s*\.label\s*\{", css, re.M), "the 4x6 label style must be scoped to .tote-label"
+check(c.get("/labels?codes=A2"), has=['class="tote-label"'])
+check(c.get("/sales"), has=['<span class="label">Item sales'])
+
 # --- nav shows where you are ---
 for page, label in [("/items", "Items"), ("/items/MV-00005", "Items"), ("/totes", "Totes"), ("/picklist", "Pick list"), ("/checks", "Checks")]:
     current = re.findall(r'aria-current="page">([^<]+)<', c.get(page).get_data(as_text=True))
