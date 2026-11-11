@@ -12,7 +12,9 @@ docs/ROADMAP.md has the plan.
   covers `data/`, `batches/`, `inbox/`, `*.csv`, `.env`. Check `git diff --cached` before committing.
 - **Never change anything on eBay** (publish, revise or end listings, offers, photo uploads,
   policies) and never message buyers. `.env` has `EBAY_READ_ONLY=1`, which makes the code refuse;
-  leave it on. Read-only calls (order sync, comps, categories) are fine but keep them rare.
+  leave it on. Read-only calls (order sync, comps, categories, the listing check) are fine but keep them rare.
+  Trading API calls are POSTs even when they only read, so `ebay/trading.py` has its own allow-list
+  (`READ_CALLS`, just GetMyeBaySelling). Only ever add calls that change nothing on eBay.
 - **Keep Claude API calls rare and small.** The key is for the drafter; don't run
   `draft-test` or other paid calls unless the owner asks.
 - **The real database is `data/ebay.db`.** Change its schema only with a new numbered migration in
@@ -27,7 +29,8 @@ docs/ROADMAP.md has the plan.
 ## Working on it
 
 - Python 3.12 venv: `.venv/bin/python cli.py ...`. Web app: `.venv/bin/python cli.py serve`
-  (port 5050; `--lan` for phones on the home wifi). Server-rendered Flask + Jinja, one stylesheet
+  (port 5050; `--lan` for phones on the home wifi; it restarts itself when Python code changes, debugger off).
+  Server-rendered Flask + Jinja, one stylesheet
   (`web/static/style.css`, light and dark), no JS framework. Keep it that way: small, plain, works on a phone.
 - Test: `.venv/bin/python tests/test_web.py` runs the whole web app against a temp copy of the
   real database with eBay and Claude faked. Run it after every change; extend it for new features.
@@ -43,6 +46,11 @@ Real inventory and order history are loaded (see `cli.py items`, `cli.py sales`)
 order; `batches.source = 'upload'`). Drafting one means: split at the whiteboard divider photos, write
 `batches/<batch>/drafts.json` plus `batches/<batch>/photos/`, then `cli.py import-drafts <batch>`. The Claude API drafter (`ebay/drafter.py`) is tested (Opus 5.5 is best, about
 $0.10/item) but not wired into a real workflow yet.
+
+Order sync (`orders.sync`, the "Get new orders from eBay" button) only reads orders: a new sale lowers the
+item's `quantity` (units still listed) and at 0 the item becomes BOUGHT. It never notices ended listings;
+the listing check (Checks page, `trading.active_listings` + `trading.compare`) does, and only a person
+confirming marks items ENDED. Every sync and listing check logs an event, which is where "last checked" comes from.
 
 ## Unattended work (owner away, 2026-11-10)
 
