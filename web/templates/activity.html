@@ -24,7 +24,7 @@
   <button>Filter</button>
 </form>
 <table>
-  <tr><th>When</th><th>Who</th><th>What</th><th>On</th><th>Details</th></tr>
+  <tr><th>When</th><th>Who</th><th>What</th><th>On</th><th class="opt">Details</th></tr>
   {% for e in rows %}
   {% set d = parse_json(e.data) %}
   <tr>
@@ -34,7 +34,7 @@
     <td class="nowrap">{% if e.entity == 'item' %}<a href="{{ url_for('item', sku=e.entity_id) }}">{{ e.entity_id }}</a>
         {% elif e.entity == 'location' %}<a href="{{ url_for('tote', code=e.entity_id) }}">{{ e.entity_id }}</a>
         {% else %}{{ e.entity }} {{ e.entity_id }}{% endif %}</td>
-    <td class="muted small">{% if d %}{% for k, v in d.items() if v is not none %}{{ k }}: {{ v|join(', ') if v is iterable and v is not string else v }}{% if not loop.last %}; {% endif %}{% endfor %}{% endif %}</td>
+    <td class="muted small opt">{% if d %}{% for k, v in d.items() if v is not none %}{{ k }}: {{ v|join(', ') if v is iterable and v is not string else v }}{% if not loop.last %}; {% endif %}{% endfor %}{% endif %}</td>
   </tr>
   {% endfor %}
 </table>

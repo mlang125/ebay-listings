@@ -162,7 +162,7 @@ t = check(c.get("/totes?sort=listed&dir=desc"))
 listed = [int(x) for x in re.findall(r'<a href="/totes/[A-Z0-9]+">[A-Z0-9]+</a>(?:[^<]|<span[^>]*>[^<]*</span>)*</td>\s*<td class="num">(\d+)</td>', t)]
 assert len(listed) > 5 and listed == sorted(listed, reverse=True), listed[:10]
 tt = check(c.get("/totes/OT?sort=title"))
-titles = re.findall(r'<td class="num">[^<]*</td><td>([^<]*)</td>', tt)
+titles = re.findall(r'<td class="title">([^<]*)</td>', tt)
 assert len(titles) > 5 and [x.lower() for x in titles] == sorted(x.lower() for x in titles), titles[:5]
 
 # --- item filters ---
@@ -179,7 +179,7 @@ assert count(check(c.get("/items?tote=?"))) == db_.execute("select count(*) from
 n90 = db_.execute("select count(*) from items i where status = 'LISTED' and julianday('now') - julianday((select max(listed_at) from listings where sku = i.sku)) >= 90").fetchone()[0]
 html = check(c.get("/items?status=LISTED&min_days=90&sort=days&dir=asc"))
 assert count(html) == n90 and n90 > 0
-days = [int(x) for x in re.findall(r'<td class="num">(\d+)</td>\s*<td class="nowrap small">', html)]
+days = [int(x) for x in re.findall(r'<td class="num opt">(\d+)</td>\s*<td class="nowrap small opt">', html)]
 assert days and min(days) >= 90 and days == sorted(days), days[:5]
 assert count(check(c.get("/items?status=LISTED&min_price=abc"))) == n_listed, "a bad number is ignored, not an error"
 

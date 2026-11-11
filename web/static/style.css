@@ -21,7 +21,8 @@ h2 { font-size: 1.15em; margin: 1.2em 0 0.5em; }
 .nowrap { white-space: nowrap; }
 .lead { font-size: 1.1em; }
 
-nav.top { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; padding: 10px 16px; background: var(--card); border-bottom: 1px solid var(--line); }
+nav.top { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; padding: 10px 16px; background: var(--card); border-bottom: 1px solid var(--line);
+          position: sticky; top: 0; z-index: 10; }
 nav.top a { text-decoration: none; color: var(--text); }
 nav.top .brand { font-weight: 600; }
 nav.top .spacer { flex: 1; }
@@ -151,4 +152,55 @@ ul.attention a strong { display: inline-block; min-width: 2.5em; color: var(--ac
 @media print {
   .labels { display: block; }
   .label { border: 0; border-radius: 0; break-after: page; margin: 0; }
+}
+
+/* Phones: one scrolling row of links, tables that scroll sideways, low-priority columns hidden. */
+@media (max-width: 640px) {
+  main { padding: 12px; }
+  nav.top { flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; gap: 14px; padding: 10px 12px; -webkit-overflow-scrolling: touch; }
+  nav.top .spacer { flex: 0 0 4px; }
+  h1 { font-size: 1.3em; }
+  table:not(.compact) { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  th, td { padding: 6px 8px; }
+  .opt { display: none; }
+  .filters input, .filters select { flex: 1 1 40%; min-width: 0; }
+  .filters input[name=q], .filters input[name=codes] { flex-basis: 100%; }
+  .bulk { gap: 8px; }
+  .bulk .bulk-count { flex-basis: 100%; }
+  .head { align-items: flex-start; }
+  table.pick { display: block; border: 0; background: none; }
+  table.pick tbody { display: block; }
+  table.pick tr { display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: baseline; padding: 8px 10px; margin-bottom: 8px;
+                  background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
+  table.pick td { border: 0; padding: 0; }
+  table.pick td:nth-child(3) { flex-basis: 100%; order: 3; }
+  table.pick td.noprint { flex-basis: 100%; order: 4; padding-top: 6px; }
+  .photos img { height: 140px; }
+}
+/* Touch screens: bigger targets. */
+@media (pointer: coarse) {
+  button, select, input:not([type=checkbox]):not([type=radio]) { min-height: 42px; }
+  button.small { min-height: 34px; padding: 4px 12px; }
+  input[type=checkbox], input[type=radio] { width: 1.4em; height: 1.4em; }
+  th.tick input, td.tick input { width: 1.4em; height: 1.4em; }
+  nav.top a { padding: 6px 0; }
+  ul.attention li { padding: 10px 0; }
+}
+
+/* Phones: item tables become one card per item (title on its own line); the header row stays as sort links. */
+@media (max-width: 640px) {
+  table.itemrows { display: block; overflow: visible; border: 0; background: none; }
+  table.itemrows tbody { display: block; }
+  table.itemrows tr { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 8px 10px; margin-bottom: 8px;
+                      background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
+  table.itemrows tr:first-child { background: none; border: 0; padding: 0 2px; margin-bottom: 4px; gap: 4px 14px; }
+  table.itemrows th, table.itemrows td { border: 0; padding: 0; }
+  table.itemrows td.title { flex-basis: 100%; order: 5; }
+  table.itemrows td:has(input.tote-input) { order: 6; }
+  table.itemrows td:last-child:has(button) { order: 7; }
+  table.itemrows td.num { margin-left: auto; }
+}
+@media (max-width: 640px) {
+  .bulk .bulk-group { flex-wrap: wrap; }
+  .bulk .bulk-group input[name=note] { flex: 1 1 8em; }
 }

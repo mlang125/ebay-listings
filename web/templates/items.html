@@ -27,8 +27,8 @@
 <form method="post">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 {{ bulk_bar(statuses, request.full_path, suggestion) }}
-<table>
-  <tr>{{ tick_all() }}{{ th('SKU', 'sku') }}{{ th('Status', 'status') }}{{ th('Tote', 'tote') }}{{ th('Price', 'price', num=True) }}{{ th('Title', 'title') }}{{ th('Days listed', 'days', num=True) }}{{ th('Last change', 'changed') }}</tr>
+<table class="itemrows">
+  <tr>{{ tick_all() }}{{ th('SKU', 'sku') }}{{ th('Status', 'status') }}{{ th('Tote', 'tote') }}{{ th('Price', 'price', num=True) }}{{ th('Title', 'title') }}{{ th('Days listed', 'days', num=True, opt=True) }}{{ th('Last change', 'changed', opt=True) }}</tr>
   {% for r in rows %}
   <tr>
     {{ tick(r.sku) }}
@@ -36,9 +36,9 @@
     <td>{{ r.status }}{% if r.missing_since %} <span class="tag needs-work">missing</span>{% endif %}</td>
     <td>{% if r.tote %}<a href="{{ url_for('tote', code=r.tote) }}">{{ r.tote }}</a>{% else %}<span class="muted">?</span>{% endif %}</td>
     <td class="num">{{ money(r.price) }}</td>
-    <td>{{ r.title }}</td>
-    <td class="num">{{ r.days_listed if r.status == 'LISTED' and r.days_listed is not none else '' }}</td>
-    <td class="nowrap small">{{ (r.last_change or '')[:10] }}</td>
+    <td class="title">{{ r.title }}</td>
+    <td class="num opt">{{ r.days_listed if r.status == 'LISTED' and r.days_listed is not none else '' }}</td>
+    <td class="nowrap small opt">{{ (r.last_change or '')[:10] }}</td>
   </tr>
   {% else %}
   <tr><td colspan="8" class="muted">No items match.</td></tr>

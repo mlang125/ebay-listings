@@ -43,15 +43,15 @@
       <button class="primary">Move</button>
     </span>
   </div>
-  <table>
+  <table class="itemrows">
     <tr>{{ tick_all() }}{{ th('SKU', 'sku') }}{{ th('Status', 'status') }}{{ th('Price', 'price', num=True) }}{{ th('Title', 'title') }}<th>Move to</th><th></th></tr>
     {% for r in rows %}
     <tr class="{{ 'missing' if r.missing_since else '' }}">
       {{ tick(r.sku) }}
       <td class="nowrap"><a href="{{ url_for('item', sku=r.sku) }}">{{ r.sku }}</a></td>
       <td>{{ r.status }}{% if r.missing_since %} <span class="tag needs-work">missing</span>{% endif %}</td>
-      <td class="num">{{ money(r.price) }}</td><td>{{ r.title }}</td>
-      <td><input name="to_{{ r.sku }}" list="codes" size="5" class="tote-input" autocapitalize="characters" aria-label="Move {{ r.sku }} to"></td>
+      <td class="num">{{ money(r.price) }}</td><td class="title">{{ r.title }}</td>
+      <td><input name="to_{{ r.sku }}" list="codes" size="5" class="tote-input" placeholder="move to" autocapitalize="characters" aria-label="Move {{ r.sku }} to"></td>
       <td><button class="small" formaction="{{ url_for('item_missing', sku=r.sku) }}" name="missing" value="{{ '0' if r.missing_since else '1' }}">{{ 'Found' if r.missing_since else 'Missing' }}</button></td>
     </tr>
     {% endfor %}

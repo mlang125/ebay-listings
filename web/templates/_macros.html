@@ -1,7 +1,7 @@
 {# Shared bits of markup. Import with: {% from "_macros.html" import th with context %} #}
 
-{% macro th(label, key, num=False) -%}
-<th class="{{ 'num' if num else '' }}" aria-sort="{{ {'▲': 'ascending', '▼': 'descending'}.get(sort_mark(key), 'none') }}">
+{% macro th(label, key, num=False, opt=False) -%}
+<th class="{{ 'num' if num else '' }} {{ 'opt' if opt else '' }}" aria-sort="{{ {'▲': 'ascending', '▼': 'descending'}.get(sort_mark(key), 'none') }}">
   <a class="sort" href="{{ sort_url(key) }}">{{ label }}<span class="sort-mark" aria-hidden="true">{{ sort_mark(key) }}</span></a>
 </th>
 {%- endmacro %}
