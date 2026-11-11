@@ -46,5 +46,13 @@
   {% endfor %}
 </table>
 </form>
-{% if total > rows|length %}<p class="muted">Showing {{ rows|length }} of {{ total }}. Narrow the search to see the rest.</p>{% endif %}
+<div class="head pager-row">
+  <span class="muted">{% if total %}{{ first }}–{{ first + rows|length - 1 }} of {{ total }}{% endif %}</span>
+  <span class="pager">
+    {% if page > 1 %}<a href="{{ url_for('items', page=page - 1, **args) }}">← Previous</a>{% endif %}
+    {% if pages > 1 %}<span class="muted">page {{ page }} of {{ pages }}</span>{% endif %}
+    {% if page < pages %}<a href="{{ url_for('items', page=page + 1, **args) }}">Next →</a>{% endif %}
+    {% if total %}<a href="{{ url_for('items_csv', **args) }}">Download CSV</a>{% endif %}
+  </span>
+</div>
 {% endblock %}

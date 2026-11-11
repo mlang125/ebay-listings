@@ -284,6 +284,18 @@ assert "between 1 and 89" in bulk({"skus": stale, "action": "drop", "percent": "
 assert "Only listed items" in bulk({"skus": [C], "action": "drop", "percent": "10"})
 assert count(check(c.get("/items?status=SUGGESTED"))) == 3
 
+# --- paging and CSV ---
+import csv as csv_module, io as io_module  # noqa: E402
+p1 = check(c.get("/items?status=LISTED&sort=price&dir=desc"), has=["Next →", "Download CSV"])
+p2 = check(c.get("/items?status=LISTED&sort=price&dir=desc&page=2"), has=["← Previous", "201–"])
+assert set(skus(p1)).isdisjoint(skus(p2)) and prices(p1)[-1] >= prices(p2)[0], "page 2 continues page 1"
+assert "status=LISTED" in re.search(r'href="([^"]*page=2[^"]*)"', p1).group(1).replace("&amp;", "&")
+assert "page 1 of" in check(c.get("/items?status=LISTED&page=-4")) and "Next" not in check(c.get("/items?status=LISTED&page=999")).split("Download CSV")[0][-200:]
+r = c.get("/items.csv?status=LISTED&tote=OT")
+assert r.status_code == 200 and r.mimetype == "text/csv" and "attachment" in r.headers["Content-Disposition"]
+rows = list(csv_module.DictReader(io_module.StringIO(r.get_data(as_text=True))))
+assert len(rows) == count(check(c.get("/items?status=LISTED&tote=OT"))) and all(x["tote"] == "OT" and x["status"] == "LISTED" for x in rows)
+
 # --- shipping, numbers, activity ---
 check(c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "PACKAGED", "days": ""}, follow_redirects=True), has=["packaged"])
 assert c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "DELIVERED"}).status_code == 400

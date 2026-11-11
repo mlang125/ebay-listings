@@ -4,6 +4,7 @@ Server-rendered Flask pages over the same code the CLI uses, all reading and wri
 database. Every change is recorded under the signed-in person. Run it with `cli.py serve`.
 """
 
+import csv
 import datetime
 import functools
 import io
@@ -38,6 +39,7 @@ CONDITIONS = [
 ]
 
 TITLE_MAX = 80
+PAGE_SIZE = 200  # rows per page on the items list
 
 
 def create_app(db_path=None, batches_dir=None):
@@ -441,9 +443,8 @@ def _routes(app):
 
     # --- items and totes ---
 
-    @app.route("/items")
-    @login_required
-    def items():
+    def _item_filters():
+        """The items page's filters from the URL, as (SQL, params, cleaned-up values)."""
         f = {k: request.args.get(k, "").strip() for k in ("q", "status", "tote", "min_price", "max_price", "min_days")}
         where, params = ["1 = 1"], []
         if f["q"]:
@@ -471,14 +472,41 @@ def _routes(app):
                 params.append(value)
             else:
                 f[key] = ""
-        sql = ITEMS_SQL + " WHERE " + " AND ".join(where)
+        return ITEMS_SQL + " WHERE " + " AND ".join(where), params, f
+
+    @app.route("/items")
+    @login_required
+    def items():
+        sql, params, f = _item_filters()
         total = g.conn.execute("SELECT COUNT(*) FROM (%s)" % sql, params).fetchone()[0]
-        rows = g.conn.execute(sql + order_by(ITEM_SORTS, "sku", default_desc=True) + " LIMIT 300", params).fetchall()
+        pages = max(1, -(-total // PAGE_SIZE))
+        page = min(max(request.args.get("page", 1, type=int), 1), pages)
+        rows = g.conn.execute(sql + order_by(ITEM_SORTS, "sku", default_desc=True) + " LIMIT ? OFFSET ?",
+                              params + [PAGE_SIZE, (page - 1) * PAGE_SIZE]).fetchall()
         totes = [r["code"] for r in g.conn.execute(
             "SELECT DISTINCT l.code FROM locations l JOIN items i ON i.location_id = l.id"
             " ORDER BY l.kind = 'place', substr(l.code, 1, 1), CAST(substr(l.code, 2) AS INTEGER)")]
+        args = request.args.to_dict()
+        args.pop("page", None)
         return render_template("items.html", rows=rows, total=total, f=f, statuses=db.STATUSES, totes=totes,
-                               filtered=any(f.values()), suggestion=db.suggest_tote(g.conn))
+                               filtered=any(f.values()), suggestion=db.suggest_tote(g.conn),
+                               page=page, pages=pages, first=(page - 1) * PAGE_SIZE + 1, args=args)
+
+    @app.route("/items.csv")
+    @login_required
+    def items_csv():
+        """Everything the current filters match, as a spreadsheet."""
+        sql, params, _ = _item_filters()
+        rows = g.conn.execute(sql + order_by(ITEM_SORTS, "sku", default_desc=True), params).fetchall()
+        out = io.StringIO()
+        writer = csv.writer(out)
+        columns = ["sku", "status", "tote", "price", "suggested_price", "cost", "title", "days_listed", "last_change",
+                   "listing_id", "missing_since", "notes"]
+        writer.writerow(columns)
+        writer.writerows([r[c] for c in columns] for r in rows)
+        name = "items-%s.csv" % datetime.date.today().isoformat()
+        return app.response_class(out.getvalue(), mimetype="text/csv",
+                                  headers={"Content-Disposition": "attachment; filename=" + name})
 
     @app.route("/items/<sku>", methods=["GET", "POST"])
     @login_required
