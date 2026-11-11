@@ -306,6 +306,14 @@ assert "/items?q=teapot" in c.get("/find?q=teapot").location
 assert "/items?q=Z99" in c.get("/find?q=Z99").location, "a tote code with nothing in it falls back to search"
 check(c.get("/"), has=['action="/find"'])
 
+# --- sign-in lockout ---
+x = app.test_client()
+xt = csrf(check(x.get("/login")))
+for _ in range(10):
+    check(x.post("/login", data={"csrf": xt, "name": "sam", "password": "nope"}), has=["Wrong name or password"])
+check(x.post("/login", data={"csrf": xt, "name": "sam", "password": "testpass456"}), code=429, has=["Too many wrong passwords"])
+check(x.post("/login", data={"csrf": xt, "name": "matt", "password": "testpass123"}), code=302)  # other names aren't affected
+
 # --- shipping, numbers, activity ---
 check(c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "PACKAGED", "days": ""}, follow_redirects=True), has=["packaged"])
 assert c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "DELIVERED"}).status_code == 400

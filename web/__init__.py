@@ -39,6 +39,8 @@ CONDITIONS = [
 ]
 
 TITLE_MAX = 80
+MAX_FAILED_SIGN_INS = 10  # per name, within LOCKOUT_MINUTES, since the last good sign-in
+LOCKOUT_MINUTES = 15
 PAGE_SIZE = 200  # rows per page on the items list
 
 
@@ -244,6 +246,15 @@ def _routes(app):
     @app.route("/login", methods=["GET", "POST"])
     def login():
         if request.method == "POST":
+            name = request.form["name"].strip().lower()[:40]
+            since = (datetime.datetime.now() - datetime.timedelta(minutes=LOCKOUT_MINUTES)).isoformat(timespec="seconds")
+            failures = g.conn.execute(
+                "SELECT COUNT(*) FROM events WHERE entity = 'user' AND entity_id = ? AND action = 'sign_in_failed' AND at >= ?"
+                " AND id > COALESCE((SELECT MAX(id) FROM events WHERE entity = 'user' AND entity_id = ? AND action = 'signed_in'), 0)",
+                (name, since, name)).fetchone()[0]
+            if failures >= MAX_FAILED_SIGN_INS:
+                flash("Too many wrong passwords for %s. Wait %d minutes and try again." % (name, LOCKOUT_MINUTES), "error")
+                return render_template("login.html"), 429
             row = g.conn.execute(
                 "SELECT * FROM users WHERE name = ? AND active = 1", (request.form["name"].strip().lower(),)
             ).fetchone()
