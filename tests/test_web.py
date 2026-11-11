@@ -314,6 +314,11 @@ for _ in range(10):
 check(x.post("/login", data={"csrf": xt, "name": "sam", "password": "testpass456"}), code=429, has=["Too many wrong passwords"])
 check(x.post("/login", data={"csrf": xt, "name": "matt", "password": "testpass123"}), code=302)  # other names aren't affected
 
+# --- photos on the item page ---
+html = check(c.get("/items/MV-00001"), has=['class="photos small-photos"', "/photos/batch1/MV-00001-1.jpg"])
+no_draft = fresh().execute("select sku from items where sku not in (select sku from drafts) limit 1").fetchone()[0]
+assert 'small-photos' not in check(c.get("/items/" + no_draft)), "items without a draft have no photo strip"
+
 # --- shipping, numbers, activity ---
 check(c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "PACKAGED", "days": ""}, follow_redirects=True), has=["packaged"])
 assert c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "DELIVERED"}).status_code == 400

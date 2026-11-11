@@ -576,11 +576,14 @@ def _routes(app):
         ).fetchall()
         relist_of = g.conn.execute("SELECT sku FROM items WHERE relisted_as = ?", (sku,)).fetchall()
         suggestion = g.conn.execute("SELECT " + db.LATEST_SUGGESTION + " FROM items i WHERE i.sku = ?", (sku,)).fetchone()[0]
-        draft_batch = drafts.get(g.conn, sku)[0] if row["status"] == "PENDING" else None
+        batch_name, draft_item = drafts.get(g.conn, sku)
+        draft_batch = batch_name if row["status"] == "PENDING" else None
+        photos = [(batch_name, p) for p in (draft_item or {}).get("photos", [])
+                  if os.path.exists(os.path.join(g.batches_dir, batch_name or "", "photos", p))]
         return render_template("item.html", row=row, events=events, listings=item_listings, sales=item_sales,
                                statuses=db.STATUSES, parse_json=_parse_json, relist_of=relist_of,
                                relistable=db.RELISTABLE, off_ebay=row["status"] in db.OFF_EBAY,
-                               suggestion=suggestion, draft_batch=draft_batch, title_max=TITLE_MAX)
+                               suggestion=suggestion, draft_batch=draft_batch, title_max=TITLE_MAX, photos=photos)
 
     @app.route("/items/<sku>/edit", methods=["POST"])
     @login_required
