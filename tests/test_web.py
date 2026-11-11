@@ -164,6 +164,24 @@ tt = check(c.get("/totes/OT?sort=title"))
 titles = re.findall(r'<td class="num">[^<]*</td><td>([^<]*)</td>', tt)
 assert len(titles) > 5 and [x.lower() for x in titles] == sorted(x.lower() for x in titles), titles[:5]
 
+# --- item filters ---
+def count(html): return int(re.search(r'<h1>Items <span class="muted">(\d+)', html).group(1))
+db_ = fresh()
+n_listed = db_.execute("select count(*) from items where status = 'LISTED'").fetchone()[0]
+assert count(check(c.get("/items?status=LISTED"), has=["Days listed", "Last change", "Clear"])) == n_listed
+assert count(check(c.get("/items"))) == db_.execute("select count(*) from items").fetchone()[0]
+n = db_.execute("select count(*) from items i join locations l on l.id = i.location_id where l.code = 'OT' and i.status = 'LISTED' and i.price between 10 and 20").fetchone()[0]
+html = check(c.get("/items?status=LISTED&tote=ot&min_price=10&max_price=20"))
+assert count(html) == n and n > 0, (count(html), n)
+assert all(10 <= x <= 20 for x in prices(html))
+assert count(check(c.get("/items?tote=?"))) == db_.execute("select count(*) from items where location_id is null").fetchone()[0]
+n90 = db_.execute("select count(*) from items i where status = 'LISTED' and julianday('now') - julianday((select max(listed_at) from listings where sku = i.sku)) >= 90").fetchone()[0]
+html = check(c.get("/items?status=LISTED&min_days=90&sort=days&dir=asc"))
+assert count(html) == n90 and n90 > 0
+days = [int(x) for x in re.findall(r'<td class="num">(\d+)</td>\s*<td class="nowrap small">', html)]
+assert days and min(days) >= 90 and days == sorted(days), days[:5]
+assert count(check(c.get("/items?status=LISTED&min_price=abc"))) == n_listed, "a bad number is ignored, not an error"
+
 # --- shipping, numbers, activity ---
 check(c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "PACKAGED", "days": ""}, follow_redirects=True), has=["packaged"])
 assert c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "DELIVERED"}).status_code == 400

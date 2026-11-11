@@ -413,21 +413,36 @@ def _routes(app):
     @app.route("/items")
     @login_required
     def items():
-        q = request.args.get("q", "").strip()
-        status = request.args.get("status", "")
-        sql = ITEMS_SQL + " WHERE 1 = 1"
-        params = []
-        if q:
-            sql += " AND (i.sku LIKE ? OR i.title LIKE ?)"
-            params += ["%" + q + "%"] * 2
-        if status == "MISSING":
-            sql += " AND i.missing_since IS NOT NULL"
-        elif status:
-            sql += " AND i.status = ?"
-            params.append(status)
-        sql += order_by(ITEM_SORTS, "sku", default_desc=True) + " LIMIT 301"
-        rows = g.conn.execute(sql, params).fetchall()
-        return render_template("items.html", rows=rows[:300], more=len(rows) > 300, q=q, status=status, statuses=db.STATUSES)
+        f = {k: request.args.get(k, "").strip() for k in ("q", "status", "tote", "min_price", "max_price", "min_days")}
+        where, params = ["1 = 1"], []
+        if f["q"]:
+            where.append("(i.sku LIKE ? OR i.title LIKE ?)")
+            params += ["%" + f["q"] + "%"] * 2
+        if f["status"] == "MISSING":
+            where.append("i.missing_since IS NOT NULL")
+        elif f["status"]:
+            where.append("i.status = ?")
+            params.append(f["status"])
+        if f["tote"] == "?":
+            where.append("i.location_id IS NULL")
+        elif f["tote"]:
+            where.append("l.code = ?")
+            params.append(f["tote"].upper())
+        for key, test in (("min_price", "i.price >= ?"), ("max_price", "i.price <= ?"), ("min_days", DAYS_LISTED + " >= ?")):
+            value = _float(f[key])
+            if value is not None:
+                where.append(test)
+                params.append(value)
+            else:
+                f[key] = ""
+        sql = ITEMS_SQL + " WHERE " + " AND ".join(where)
+        total = g.conn.execute("SELECT COUNT(*) FROM (%s)" % sql, params).fetchone()[0]
+        rows = g.conn.execute(sql + order_by(ITEM_SORTS, "sku", default_desc=True) + " LIMIT 300", params).fetchall()
+        totes = [r["code"] for r in g.conn.execute(
+            "SELECT DISTINCT l.code FROM locations l JOIN items i ON i.location_id = l.id"
+            " ORDER BY l.kind = 'place', substr(l.code, 1, 1), CAST(substr(l.code, 2) AS INTEGER)")]
+        return render_template("items.html", rows=rows, total=total, f=f, statuses=db.STATUSES, totes=totes,
+                               filtered=any(f.values()))
 
     @app.route("/items/<sku>", methods=["GET", "POST"])
     @login_required
@@ -670,6 +685,10 @@ def _routes(app):
                                bands=sales.price_bands(g.conn), active=sales.active(g.conn))
 
 
+# Days since the item's latest listing went up, and when anything last happened to it.
+DAYS_LISTED = "CAST(julianday('now') - julianday((SELECT MAX(listed_at) FROM listings WHERE sku = i.sku)) AS INTEGER)"
+LAST_CHANGE = "(SELECT MAX(at) FROM events WHERE entity = 'item' AND entity_id = i.sku)"
+
 # Sortable columns: URL key -> SQL.
 ITEM_SORTS = {
     "sku": "i.sku",
@@ -677,6 +696,8 @@ ITEM_SORTS = {
     "tote": ("substr(l.code, 1, 1)", "CAST(substr(l.code, 2) AS INTEGER)"),
     "price": "i.price",
     "title": "lower(i.title)",
+    "days": DAYS_LISTED,
+    "changed": LAST_CHANGE,
 }
 TOTE_SORTS = {
     "code": ("l.kind = 'place'", "substr(l.code, 1, 1)", "CAST(substr(l.code, 2) AS INTEGER)"),
@@ -689,9 +710,10 @@ TOTE_SORTS = {
 
 ITEMS_SQL = """
     SELECT i.*, l.code AS tote,
-           (SELECT listing_id FROM listings WHERE sku = i.sku ORDER BY listed_at DESC LIMIT 1) AS listing_id
+           (SELECT listing_id FROM listings WHERE sku = i.sku ORDER BY listed_at DESC LIMIT 1) AS listing_id,
+           %s AS days_listed, %s AS last_change
     FROM items i LEFT JOIN locations l ON l.id = i.location_id
-"""
+""" % (DAYS_LISTED, LAST_CHANGE)
 
 
 def _money_fmt(value):

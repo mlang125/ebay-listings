@@ -2,19 +2,28 @@
 {% block title %}Items{% endblock %}
 {% from "_macros.html" import th with context %}
 {% block body %}
-<h1>Items</h1>
+<h1>Items <span class="muted">{{ total }}{% if filtered %} found{% endif %}</span></h1>
 <form class="filters">
-  <input name="q" value="{{ q }}" placeholder="SKU or words in the title" autofocus>
-  <select name="status">
+  <input name="q" value="{{ f.q }}" placeholder="SKU or words in the title" {% if not filtered %}autofocus{% endif %}>
+  <select name="status" aria-label="Status">
     <option value="">Any status</option>
-    {% for s in statuses %}<option {% if s == status %}selected{% endif %}>{{ s }}</option>{% endfor %}
-    <option value="MISSING" {% if status == 'MISSING' %}selected{% endif %}>Marked missing</option>
+    {% for s in statuses %}<option value="{{ s }}" {% if s == f.status %}selected{% endif %}>{{ s|replace('_', ' ')|lower|capitalize }}</option>{% endfor %}
+    <option value="MISSING" {% if f.status == 'MISSING' %}selected{% endif %}>Marked missing</option>
   </select>
+  <select name="tote" aria-label="Tote">
+    <option value="">Any tote</option>
+    {% for t in totes %}<option {% if t == f.tote|upper %}selected{% endif %}>{{ t }}</option>{% endfor %}
+    <option value="?" {% if f.tote == '?' %}selected{% endif %}>Unknown</option>
+  </select>
+  <input name="min_price" value="{{ f.min_price }}" placeholder="$ min" inputmode="decimal" size="5" aria-label="Lowest price">
+  <input name="max_price" value="{{ f.max_price }}" placeholder="$ max" inputmode="decimal" size="5" aria-label="Highest price">
+  <input name="min_days" value="{{ f.min_days }}" placeholder="listed ≥ days" inputmode="numeric" size="8" aria-label="Listed at least this many days">
   {% if request.args.sort %}<input type="hidden" name="sort" value="{{ request.args.sort }}"><input type="hidden" name="dir" value="{{ request.args.dir }}">{% endif %}
-  <button>Search</button>
+  <button class="primary">Search</button>
+  {% if filtered %}<a href="{{ url_for('items') }}" class="clear">Clear</a>{% endif %}
 </form>
 <table>
-  <tr>{{ th('SKU', 'sku') }}{{ th('Status', 'status') }}{{ th('Tote', 'tote') }}{{ th('Price', 'price', num=True) }}{{ th('Title', 'title') }}</tr>
+  <tr>{{ th('SKU', 'sku') }}{{ th('Status', 'status') }}{{ th('Tote', 'tote') }}{{ th('Price', 'price', num=True) }}{{ th('Title', 'title') }}{{ th('Days listed', 'days', num=True) }}{{ th('Last change', 'changed') }}</tr>
   {% for r in rows %}
   <tr>
     <td><a href="{{ url_for('item', sku=r.sku) }}">{{ r.sku }}</a></td>
@@ -22,10 +31,12 @@
     <td>{% if r.tote %}<a href="{{ url_for('tote', code=r.tote) }}">{{ r.tote }}</a>{% else %}<span class="muted">?</span>{% endif %}</td>
     <td class="num">{{ money(r.price) }}</td>
     <td>{{ r.title }}</td>
+    <td class="num">{{ r.days_listed if r.status == 'LISTED' and r.days_listed is not none else '' }}</td>
+    <td class="nowrap small">{{ (r.last_change or '')[:10] }}</td>
   </tr>
   {% else %}
-  <tr><td colspan="5" class="muted">No items match.</td></tr>
+  <tr><td colspan="7" class="muted">No items match.</td></tr>
   {% endfor %}
 </table>
-{% if more %}<p class="muted">Showing the first 300. Narrow the search to see the rest.</p>{% endif %}
+{% if total > rows|length %}<p class="muted">Showing {{ rows|length }} of {{ total }}. Narrow the search to see the rest.</p>{% endif %}
 {% endblock %}
