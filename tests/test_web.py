@@ -445,8 +445,8 @@ if len(in_tote) > 2:
 assert 'rel="prev"' not in c.get("/items/" + in_tote[0]).get_data(as_text=True)
 
 # --- find box: one match opens the item ---
-one = next(r[0] for r in fresh().execute("select title from items i where title is not null and length(title) > 20"
-                                         " and (select count(*) from items j where j.title like '%' || i.title || '%') = 1 limit 1"))
+one = next(t for (t,) in fresh().execute("select title from items where length(title) > 20 order by sku limit 50")
+           if fresh().execute("select count(*) from items where sku like ? or title like ?", ["%" + t + "%"] * 2).fetchone()[0] == 1)
 r = c.get("/find?q=" + one)
 assert r.status_code == 302 and "/items/MV-" in r.headers["Location"], r.headers.get("Location")
 assert "/items?q=" in c.get("/find?q=Disney").headers["Location"], "several matches show the list"
