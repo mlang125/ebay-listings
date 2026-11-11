@@ -268,3 +268,11 @@ before relying on them.
 | Thermal printer model (4×6 PDF works with most: Rollo, Zebra, Dymo 4XL) | Phase 2 |
 | Claude API cost per listing (measured in Phase 1) | end of Phase 1 |
 | Always-on machine: does the laptop stay awake and on the network enough? | Phase 1 |
+
+### Done while the owner was away (2026-11-10)
+
+- [x] Sortable tables; item filters (tote, price, days listed), paging and CSV export; quick find.
+- [x] Bulk actions: move, missing/found, status, price-drop suggestions.
+- [x] Needs-attention home page; tote labels with QR codes; totes with on-hand count and value.
+- [x] Item page editing (notes, cost, and title/price when not on eBay); eBay price suggestions.
+- [x] Phone layout; sign-in lockout after repeated wrong passwords.

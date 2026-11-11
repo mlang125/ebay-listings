@@ -37,16 +37,30 @@ Run commands with `.venv/bin/python cli.py ...` (or `source .venv/bin/activate` 
 .venv/bin/python cli.py serve --lan              # also reachable from phones/laptops on the home wifi
 ```
 
-Pages:
+Pages (every table sorts by clicking a column header; the sort stays in the URL):
 
+- **Home:** what needs attention, each count linking to the list: items waiting in UN, missing items,
+  cancellations not relisted, listings up 90+ days, price suggestions to apply, on-hand items with no
+  known tote, totes never checked. Overdue and due-today shipments show at the top.
+- **Find** (top bar): a SKU or just its number (`920`), a tote code, or words from a title.
 - **Drafts:** each batch's drafts with their photos and state (*needs work*, *ready*, *published*,
   *skipped*). The editor covers title, price, condition, description, item specifics, package size,
   comp search words and open questions. A draft can't be published while it still has open questions
   (`needs_check`), so delete each question once it's settled. *Update estimate* re-runs `comps` for that draft.
   *Publish N ready* publishes every ready draft in the batch. Edits and publishes are logged under the signed-in person.
-- **Items:** search by SKU or title, filter by status. An item's page shows its listings, sales and full
-  history, and lets you move it to another tote or set its status by hand (with a note).
-- **Totes:** what's on hand in each tote, and the next free tote ID.
+- **Items:** search by SKU or title and filter by status (plus *on hand*, *missing* and *price suggested*),
+  tote, price range and days listed, together. 200 per page; *Download CSV* exports everything matching.
+  - *Bulk actions:* tick rows (or tick all), then move them to a tote, mark them missing or found, set
+    their status, or suggest a price N% lower (ending in .99). All or nothing.
+  - *An item's page* shows its listings, sales, relist links and full history, and lets you move it or set
+    its status by hand (with a note). *Our records* edits notes and cost (empty = unknown) and, for items
+    not live on eBay, the title and price. For listed items, *Suggest* records a new eBay price; change it
+    on eBay, then press *Applied*. Nothing on this page is sent to eBay.
+- **Totes:** each tote's on-hand count, listed value and last check, plus the next free tote ID.
+  The tote page has the same tick-and-act bar as the items list.
+  - *Labels:* `/labels` prints one 4x6 label per tote: the code in big letters and a QR code that opens
+    the tote's page. Set `LABEL_URL` in `.env` (e.g. `http://your-mac.local:5050`) so printed codes keep
+    working if the Mac's IP address changes.
   - *Combine totes* (e.g. B4 + C6): everything goes into the next free ID (say A5), into one of
     the totes (keeping its label), or into an ID you type. Only on-hand items move; shipped items keep
     their old tote as history. A tote is free once nothing in it is on hand.
@@ -73,6 +87,11 @@ and imports. On the command line that's `CLI_USER` from `.env`; commands that ch
 without it. Two people editing the same draft can't overwrite each other: the second save is refused and shows who saved first.
 The session-signing key is created in `data/web_secret_key` on first run.
 `--lan` serves plain HTTP, so use it only on your own wifi. Port 5050 avoids macOS AirPlay, which uses 5000.
+After 10 wrong passwords for a name in 15 minutes, that name can't sign in until the 15 minutes pass.
+With `EBAY_READ_ONLY=1` in `.env`, nothing can be published or changed on eBay (an "eBay read-only" tag shows).
+
+Phones get a layout of their own: the top bar stays put, item lists turn into cards, and buttons are bigger.
+`tests/test_web.py` checks the whole site against a temp copy of the database (run it after any change).
 
 ## Commands
 
