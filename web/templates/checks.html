@@ -2,7 +2,14 @@
 {% block title %}Checks{% endblock %}
 {% from "_macros.html" import tick, tick_all, bulk_bar with context %}
 {% block body %}
-<h1>Checks</h1>
+<div class="head">
+  <h1>Checks</h1>
+  <form method="post" action="{{ url_for('listings_check') }}" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button>Check listings on eBay</button>
+    <span class="muted small">Last checked {{ (last_check or 'never').replace('T', ' ')[:16] }}</span>
+  </form>
+</div>
 <p class="muted">Records that look wrong. Open an item to fix it, or tick items and use the bar at the bottom
   (for example, set ended duplicates to <em>Ended</em>, or <em>Skipped</em> if they were never a separate item).</p>
 <datalist id="codes">{% for c in codes %}<option value="{{ c }}">{% endfor %}<option value="{{ suggestion }}">next free</option></datalist>

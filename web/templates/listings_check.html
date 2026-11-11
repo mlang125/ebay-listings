@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Listings on eBay{% endblock %}
+{% from "_macros.html" import tick, tick_all with context %}
+{% block body %}
+<h1>Listings on eBay</h1>
+<p>eBay has <strong>{{ d.live }}</strong> live listings; we have <strong>{{ d.listed }}</strong> items marked listed.
+  Nothing has changed yet.</p>
+
+<h2>Listed here, not live on eBay <span class="muted">{{ d.not_live|length }}</span></h2>
+{% if d.not_live %}
+<p class="muted small">Usually ended listings. A sale that hasn't been fetched yet looks the same, so press
+  <em>Get new orders from eBay</em> first if you've had sales today. Untick anything that shouldn't change.</p>
+<form method="post" action="{{ url_for('items_bulk') }}">
+  <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="back" value="{{ url_for('checks') }}">
+  <input type="hidden" name="action" value="status"><input type="hidden" name="status" value="ENDED">
+  <input type="hidden" name="note" value="not live on eBay (listing check)">
+  <table class="itemrows">
+    <tr>{{ tick_all() }}<th>SKU</th><th>Tote</th><th>Listing</th><th>Title</th></tr>
+    {% for r in d.not_live %}
+    <tr><td class="tick"><input type="checkbox" name="sku" value="{{ r.sku }}" checked aria-label="Tick {{ r.sku }}" onchange="bulkCount(this.form)"></td>
+      <td class="nowrap"><a href="{{ url_for('item', sku=r.sku) }}">{{ r.sku }}</a></td><td class="nowrap">{{ r.tote or '?' }}</td>
+      <td class="nowrap small">{{ r.listing_id or 'none' }}</td><td class="title">{{ r.title }}</td></tr>
+    {% endfor %}
+  </table>
+  <p class="bulk"><strong class="bulk-count">{{ d.not_live|length }} ticked</strong>
+    <button class="primary">Mark ticked items Ended</button></p>
+</form>
+<script>
+  function bulkCount(form) {
+    var n = form.querySelectorAll('input[name=sku]:checked').length;
+    form.querySelector('.bulk-count').textContent = n ? n + ' ticked' : 'No items ticked';
+  }
+</script>
+{% else %}
+<p class="muted">Every item we have as listed is live on eBay.</p>
+{% endif %}
+
+{% if d.quantity %}
+<h2>Quantity left differs <span class="muted">{{ d.quantity|length }}</span></h2>
+<p class="muted small">Listings with more than one unit. eBay's number is the real one; the next order fetch catches up on sales.</p>
+<table class="itemrows">
+  <tr><th>SKU</th><th class="num">Here</th><th class="num">eBay</th><th>Title</th></tr>
+  {% for r, ebay_qty in d.quantity %}
+  <tr><td class="nowrap"><a href="{{ url_for('item', sku=r.sku) }}">{{ r.sku }}</a></td><td class="num">{{ r.quantity }}</td>
+    <td class="num">{{ ebay_qty }}</td><td class="title">{{ r.title }}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+{% if d.unknown %}
+<h2>Live on eBay, not in our records <span class="muted">{{ d.unknown|length }}</span></h2>
+<p class="muted small">Listed outside this app (for example straight in Seller Hub). They aren't tracked here yet.</p>
+<table class="itemrows">
+  <tr><th>Listing</th><th>SKU on eBay</th><th class="num">Left</th><th>Title</th></tr>
+  {% for a in d.unknown %}
+  <tr><td class="nowrap small">{{ a.listing_id }}</td><td class="nowrap">{{ a.sku or '' }}</td><td class="num">{{ a.quantity }}</td><td class="title">{{ a.title }}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+<p><a href="{{ url_for('checks') }}">Back to Checks</a></p>
+{% endblock %}

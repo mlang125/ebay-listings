@@ -84,6 +84,10 @@ Pages (every table sorts by clicking a column header; the sort stays in the URL)
   (same title on a newer listing). Tick and save, or link one by hand from the item's page.
 - **Sales:** item sales, shipping paid by buyers, average sale, sell-through, cancellations, by month and by
   price, plus what's listed now and for how long.
+- **Check listings on eBay** (on the Checks page): asks eBay which listings are live (read only, about 5 requests)
+  and lists items we have as listed that aren't, live listings we don't know about, and quantities that differ.
+  Nothing changes until you press *Mark ticked items Ended*. Fetch orders first, since an unfetched sale looks
+  the same as an ended listing.
 - **Checks:** records that look wrong (listed with no price or listing ID, titles over 80 characters, the
   same title listed twice, sales with no order, cost at or above price), each linked to the item. The home
   page points here when anything turns up.

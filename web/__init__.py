@@ -21,7 +21,7 @@ from werkzeug.utils import secure_filename
 from werkzeug.exceptions import HTTPException
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from ebay import api, comps, config, db, drafts, listings, orders, sales
+from ebay import api, comps, config, db, drafts, listings, orders, sales, trading
 
 BATCH_RE = re.compile(r"^[\w.-]+$")
 
@@ -276,7 +276,7 @@ def _routes(app):
                 "items": "items", "item": "items", "item_edit": "items",
                 "totes": "totes", "tote": "totes", "tote_count": "totes", "consolidate": "totes", "labels": "totes",
                 "quick_move": "move", "picklist": "picklist", "pack": "picklist", "relists": "relists", "checks": "checks",
-                "sales_page": "sales", "activity": "activity", "users": "users", "home": "home"}
+                "sales_page": "sales", "activity": "activity", "listings_check": "checks", "users": "users", "home": "home"}
 
     @app.context_processor
     def helpers():
@@ -420,6 +420,8 @@ def _routes(app):
         found = _data_checks(g.conn)
         return render_template("checks.html", found=[f for f in found if f[2]], clean=[f[0] for f in found if not f[2]],
                                statuses=db.STATUSES, suggestion=db.suggest_tote(g.conn),
+                               last_check=g.conn.execute("SELECT MAX(at) FROM events WHERE entity = 'listings'"
+                                                         " AND action = 'checked'").fetchone()[0],
                                codes=sorted(db.totes_in_use(g.conn) | set(db.PLACES)))
 
     # --- drafts ---
@@ -1181,6 +1183,26 @@ def _routes(app):
             flash("%d marked %s." % (len(changed), label) + (
                 " %d skipped (not waiting to ship)." % (len(skus) - len(changed)) if len(changed) < len(skus) else ""), "ok")
         return redirect(url_for("picklist", days=request.form.get("days", "")))
+
+    @app.route("/listings/check", methods=["POST"])
+    @login_required
+    def listings_check():
+        """Ask eBay which listings are live (read only) and show what differs. Nothing changes here:
+        ending items happens only when someone confirms on the page, through the bulk status action."""
+        try:
+            active = trading.active_listings()
+        except (api.EbayError, SystemExit) as e:
+            flash("Couldn't get listings from eBay: %s" % e, "error")
+            return redirect(url_for("checks"))
+        diff = trading.compare(g.conn, active)
+        with g.conn:
+            db.log_event(g.conn, "listings", "check", "checked", "web", g.user["id"], data={
+                "live": diff["live"], "not_live": len(diff["not_live"]), "unknown": len(diff["unknown"]),
+                "quantity": len(diff["quantity"])})
+        if not diff["live"] and diff["listed"]:
+            flash("eBay returned no live listings at all, which can't be right; nothing to review. Try again later.", "error")
+            return redirect(url_for("checks"))
+        return render_template("listings_check.html", d=diff)
 
     @app.route("/sync", methods=["POST"])
     @login_required

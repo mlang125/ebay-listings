@@ -22,7 +22,7 @@ S = tempfile.mkdtemp(prefix="ebay-webtest-")
 shutil.copy(os.path.join(ROOT, "data", "ebay.db"), os.path.join(S, "ebay.db"))
 shutil.copytree(os.path.join(ROOT, "batches", "batch1"), os.path.join(S, "batches", "batch1"))
 
-from ebay import comps, db, drafts, listings, orders, sales  # noqa: E402
+from ebay import api, comps, db, drafts, listings, orders, sales, trading  # noqa: E402
 from web import create_app  # noqa: E402
 from werkzeug.datastructures import MultiDict  # noqa: E402
 conn = db.connect(S + "/ebay.db"); db.set_password(conn, "matt", "testpass123"); db.add_user(conn, "sam", "lister"); db.set_password(conn, "sam", "testpass456"); conn.close()
@@ -492,6 +492,44 @@ check(c.post("/sync", data={"csrf": tok, "back": "/"}, follow_redirects=True), h
 synced = fresh().execute("select at, user_id, data from events where action = 'synced' order by id desc").fetchone()
 assert synced and synced[1] == 1 and json.loads(synced[2])["orders"] == 0, synced
 check(c.get("/"), has=["Last checked " + synced[0].replace("T", " ")[:16]])
+
+# --- listing check (eBay faked) ---
+import xml.etree.ElementTree as ET  # noqa: E402
+reply = ET.fromstring("""<GetMyeBaySellingResponse xmlns="urn:ebay:apis:eBLBaseComponents"><Ack>Success</Ack><ActiveList>
+  <ItemArray><Item><ItemID>111</ItemID><SKU>MV-1</SKU><Title>A</Title><QuantityAvailable>2</QuantityAvailable></Item>
+  <Item><ItemID>222</ItemID><Title>B</Title><Quantity>3</Quantity><SellingStatus><QuantitySold>1</QuantitySold></SellingStatus></Item></ItemArray>
+  <PaginationResult><TotalNumberOfPages>5</TotalNumberOfPages></PaginationResult></ActiveList></GetMyeBaySellingResponse>""")
+found, pages = trading.parse_active(reply)
+assert pages == 5 and found == [{"listing_id": "111", "sku": "MV-1", "quantity": 2, "title": "A"},
+                                {"listing_id": "222", "sku": None, "quantity": 2, "title": "B"}], found
+try:
+    trading._call("EndItem", "")
+    raise AssertionError("only read calls may go to the Trading API")
+except api.ReadOnly:
+    pass
+listed_rows = fresh().execute("select i.sku, i.quantity, (select listing_id from listings where sku = i.sku order by listed_at desc limit 1)"
+                              " from items i where i.status = 'LISTED' order by i.sku").fetchall()
+gone_sku, gone_listing = listed_rows[0][0], listed_rows[0][2]
+qty_sku = listed_rows[1][0]
+fake_live = [{"listing_id": r[2], "sku": r[0], "quantity": r[1] + (5 if r[0] == qty_sku else 0), "title": "x"}
+             for r in listed_rows[1:] if r[2]] + [{"listing_id": "999000111", "sku": "SH-1", "quantity": 1, "title": "Seller Hub thing"}]
+trading.active_listings = lambda: fake_live
+check(c.get("/checks"), has=["Check listings on eBay", "Last checked never"])
+page = check(c.post("/listings/check", data={"csrf": tok}))
+for h in ["Listed here, not live on eBay", gone_sku, "Mark ticked items Ended", "Quantity left differs", qty_sku,
+          "Live on eBay, not in our records", "Seller Hub thing", "Nothing has changed yet"]:
+    assert h in page, h
+assert fresh().execute("select status from items where sku=?", (gone_sku,)).fetchone()[0] == "LISTED", "the check alone changes nothing"
+check(c.post("/items/bulk", data=MultiDict([("csrf", tok), ("back", "/checks"), ("action", "status"), ("status", "ENDED"),
+                                            ("note", "not live on eBay (listing check)"), ("sku", gone_sku)]), follow_redirects=True))
+assert fresh().execute("select status from items where sku=?", (gone_sku,)).fetchone()[0] == "ENDED"
+assert "Last checked never" not in c.get("/checks").get_data(as_text=True)
+trading.active_listings = lambda: []
+check(c.post("/listings/check", data={"csrf": tok}, follow_redirects=True), has=["eBay returned no live listings at all"])
+def broken():
+    raise api.EbayError(401, "token lacks access")
+trading.active_listings = broken
+check(c.post("/listings/check", data={"csrf": tok}, follow_redirects=True), has=["Couldn&#39;t get listings from eBay"])
 
 # --- nav shows where you are ---
 for page, label in [("/items", "Items"), ("/items/MV-00005", "Items"), ("/totes", "Totes"), ("/picklist", "Pick list"), ("/checks", "Checks")]:
