@@ -399,13 +399,16 @@ def cmd_serve(*flags):
     from web import create_app
 
     host = "0.0.0.0" if "--lan" in flags else "127.0.0.1"
-    if host == "0.0.0.0":
+    # The reloader runs this twice (a watcher, then the server it restarts); print once.
+    if host == "0.0.0.0" and not os.environ.get("WERKZEUG_RUN_MAIN"):
         # The address this Mac uses on the local network (nothing is sent).
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("10.255.255.255", 1))
         print("On the home wifi, open http://%s:5050" % s.getsockname()[0])
         s.close()
-    create_app().run(host=host, port=5050, threaded=True)
+    # Restart by itself when the Python code changes (a git pull or merge), so pages never run new
+    # templates against old code. The debugger stays off: this is reachable from the home network.
+    create_app().run(host=host, port=5050, threaded=True, use_reloader=True, debug=False)
 
 
 COMMANDS = {

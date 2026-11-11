@@ -37,6 +37,9 @@ Run commands with `.venv/bin/python cli.py ...` (or `source .venv/bin/activate` 
 .venv/bin/python cli.py serve --lan              # also reachable from phones/laptops on the home wifi
 ```
 
+The server restarts by itself when the code changes (after a pull or merge), so it never runs new pages
+against old code. A server started before this change needs one manual restart.
+
 Pages (every table sorts by clicking a column header; the sort stays in the URL):
 
 - **Home:** what needs attention, each count linking to the list: items waiting in UN, missing items,
