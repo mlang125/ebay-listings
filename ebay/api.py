@@ -14,7 +14,21 @@ class EbayError(Exception):
         self.body = body
 
 
+class ReadOnly(EbayError):
+    def __init__(self, what):
+        Exception.__init__(self, "EBAY_READ_ONLY is set in .env, so %s was not sent to eBay." % what)
+        self.status = None
+        self.body = None
+
+
+def check_writable(what):
+    if config.READ_ONLY:
+        raise ReadOnly(what)
+
+
 def call(method, path, body=None, headers=None):
+    if method != "GET":
+        check_writable("%s %s" % (method, path.split("?")[0]))
     all_headers = {
         "Authorization": "Bearer " + auth.access_token(),
         "Accept": "application/json",

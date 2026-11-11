@@ -7,7 +7,7 @@ import urllib.error
 import urllib.request
 import uuid
 
-from . import auth, config
+from . import api, auth, config
 
 
 def _media_base():
@@ -17,6 +17,7 @@ def _media_base():
 
 def upload_image(path):
     """Upload one image file; returns its eBay-hosted URL."""
+    api.check_writable("a photo upload")
     boundary = uuid.uuid4().hex
     filename = os.path.basename(path)
     with open(path, "rb") as f:

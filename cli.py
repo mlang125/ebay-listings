@@ -29,6 +29,8 @@
   .venv/bin/python cli.py relists                     cancelled/returned items: suggested relist links and what's not relisted
   .venv/bin/python cli.py relists --link              saves the suggested links / relists <OLD> <NEW> links one by hand
   .venv/bin/python cli.py sales                       sales numbers by month
+  .venv/bin/python cli.py draft-test <batch> [opus|sonnet|haiku ...]
+                                             re-drafts a batch with the Claude API and compares (saves nothing to the database)
   .venv/bin/python cli.py next-sku                    prints the next free MV-##### number
   .venv/bin/python cli.py export <file.csv>           writes SKU, tote, status, title, price and listing ID to a CSV
   (Commands that change anything record CLI_USER from .env as the person who did it.)
@@ -41,6 +43,7 @@
 
 import csv
 import getpass
+import io
 import json
 import os
 import sys
@@ -288,6 +291,74 @@ def cmd_sales():
         print("%-8s %7d %6d %10.2f %10.2f %8.2f %9d" % (m["month"], m["orders"], m["items"], m["sales"], m["shipping"], m["average"], m["cancelled"]))
 
 
+def cmd_draft_test(batch, *models):
+    """Re-draft an existing batch with the Claude API and compare with the drafts on file. Saves nothing to the database."""
+    import datetime
+    import zipfile
+
+    from ebay import drafter
+
+    conn = db.connect()
+    on_file = drafts.load(conn, batch)
+    if on_file is None:
+        raise SystemExit("No drafts in batch %s" % batch)
+    zip_path = os.path.join(config.ROOT, on_file["source_zip"] or "")
+    archive = zipfile.ZipFile(zip_path) if os.path.isfile(zip_path) else None
+    claude = drafter.client()
+    photos = drafts.photos_dir(batch)
+    results = {}
+    for name in models or ("sonnet",):
+        model = drafter.MODELS.get(name, name)
+        results[model] = []
+        for item in on_file["items"]:
+            divider = None
+            if archive and item.get("divider_photo"):
+                divider = io.BytesIO(archive.read(item["divider_photo"]))
+            print("%s  %s ..." % (model, item["sku"]), end=" ", flush=True)
+            try:
+                new, run = drafter.draft(claude, model, divider, [os.path.join(photos, p) for p in item["photos"]])
+            except Exception as e:  # keep going; the error goes in the report
+                print("failed: %s" % e)
+                results[model].append({"sku": item["sku"], "error": str(e)})
+                continue
+            print("%.1fs, %d in / %d out tokens, $%.4f" % (run["seconds"], run["input_tokens"], run["output_tokens"], run["cost_usd"]))
+            results[model].append(dict(new, sku=item["sku"]))
+    out = os.path.join(config.ROOT, "batches", batch, "api-test-%s.json" % datetime.datetime.now().strftime("%Y%m%d-%H%M"))
+    with open(out, "w") as f:
+        json.dump({"batch": batch, "on_file": on_file["items"], "results": results}, f, indent=2, default=str)
+    report = _draft_test_report(on_file["items"], results)
+    with open(out.replace(".json", ".txt"), "w") as f:
+        f.write(report)
+    print("\n" + report + "\nSaved %s (and .txt)" % out)
+
+
+def _draft_test_report(on_file, results):
+    lines = []
+    for model, items in results.items():
+        runs = [i["drafted_by"] for i in items if "drafted_by" in i]
+        if runs:
+            lines.append("%s: %d items, $%.4f total, $%.4f per item, %.1fs per item, %d input / %d output tokens per item" % (
+                model, len(runs), sum(r["cost_usd"] for r in runs), sum(r["cost_usd"] for r in runs) / len(runs),
+                sum(r["seconds"] for r in runs) / len(runs), sum(r["input_tokens"] for r in runs) // len(runs),
+                sum(r["output_tokens"] for r in runs) // len(runs)))
+    lines.append("")
+    for hand in on_file:
+        lines.append("=" * 100)
+        lines.append("%s  (on file: %s)" % (hand["sku"], "skipped: " + hand["skip"] if hand.get("skip") else "published" if hand.get("published") else "draft"))
+        lines.append("  on file   %-12s $%-7s cat %-7s %s" % (hand.get("condition"), hand.get("price"), hand.get("category_id"), hand.get("title")))
+        for model, items in results.items():
+            new = next(i for i in items if i["sku"] == hand["sku"])
+            short = model.replace("claude-", "")
+            if "error" in new:
+                lines.append("  %-9s ERROR %s" % (short, new["error"]))
+                continue
+            lines.append("  %-9s %-12s $%-7s cat %-7s %s" % (short, new["condition"], new["price"], new["category_id"], new["title"]))
+            lines.append("  %-9s whiteboard %r; category %s; comps %r" % ("", new["whiteboard_notes"], new["category"], new["comp_query"]))
+            for q in new["needs_check"]:
+                lines.append("  %-9s ? %s" % ("", q))
+    return "\n".join(lines) + "\n"
+
+
 def cmd_free_tote():
     print(db.suggest_tote(db.connect()))
 
@@ -363,6 +434,7 @@ COMMANDS = {
     "found": cmd_found,
     "relists": cmd_relists,
     "sales": cmd_sales,
+    "draft-test": cmd_draft_test,
     "next-sku": cmd_next_sku,
     "export": cmd_export,
     "user": cmd_user,

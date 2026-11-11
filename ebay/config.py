@@ -35,6 +35,9 @@ ROOT = os.path.dirname(ENV_FILE)
 DB_PATH = os.path.join(ROOT, _ENV_VALUES.get("DB_PATH") or "data/ebay.db")
 # Who `cli.py` records as doing things (a name from `cli.py user list`); optional.
 CLI_USER = _ENV_VALUES.get("CLI_USER") or None
+# EBAY_READ_ONLY=1 blocks every eBay call that would change something (publishing, offers,
+# photo uploads, setup); lookups such as comps, order sync and categories still work.
+READ_ONLY = (_ENV_VALUES.get("EBAY_READ_ONLY") or "").lower() in ("1", "true", "yes")
 
 
 ENV = "production"  # or "sandbox" for testing

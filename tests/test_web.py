@@ -1,0 +1,157 @@
+"""End-to-end test of the web app against a throwaway copy of the real database.
+
+    .venv/bin/python tests/test_web.py
+
+Copies data/ebay.db and batches/batch1 into a temp folder, signs in two test users and
+goes through drafts, items, totes, relists, the pick list, sales and activity. eBay and
+Claude are never called: publish and comps are replaced with fakes. Some checks assume
+today's data (batch1's drafts, MV-01074 relisted as MV-00852, an item waiting to ship);
+update them when the data moves on.
+"""
+
+import json
+import os
+import re
+import shutil
+import sys
+import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+S = tempfile.mkdtemp(prefix="ebay-webtest-")
+shutil.copy(os.path.join(ROOT, "data", "ebay.db"), os.path.join(S, "ebay.db"))
+shutil.copytree(os.path.join(ROOT, "batches", "batch1"), os.path.join(S, "batches", "batch1"))
+
+from ebay import comps, db, drafts, listings, orders  # noqa: E402
+from web import create_app  # noqa: E402
+conn = db.connect(S + "/ebay.db"); db.set_password(conn, "matt", "testpass123"); db.add_user(conn, "sam", "lister"); db.set_password(conn, "sam", "testpass456"); conn.close()
+
+calls = []
+def fake_publish(conn, batch, skus, user=None, actor="cli", log=print):
+    calls.append((skus, user, actor)); log("%s: published as listing 999 (fake)" % sorted(skus))
+listings.publish = fake_publish
+comps.refresh_active = lambda conn, batch, skus, log=print, user=None, actor="cli": calls.append(("comps", skus, user))
+app = create_app(db_path=S + "/ebay.db", batches_dir=S + "/batches")
+
+def csrf(html): return re.search(r'name="csrf" value="([^"]+)"', html).group(1)
+def check(resp, code=200, has=()):
+    assert resp.status_code == code, (resp.status_code, resp.data[:500])
+    if resp.mimetype != "text/html": return None
+    body = resp.get_data(as_text=True)
+    for h in has: assert h in body, (h, body[:3000])
+    return body
+def sign_in(name, pw):
+    c = app.test_client()
+    tok = csrf(check(c.get("/login")))
+    r = c.post("/login", data={"csrf": tok, "name": name, "password": pw}); assert r.status_code == 302, r.status_code
+    return c, csrf(c.get("/").get_data(as_text=True))
+def fresh(): return db.connect(S + "/ebay.db")
+
+# --- sign-in ---
+START = fresh().execute("SELECT COALESCE(MAX(id), 0) FROM events").fetchone()[0]  # only count events from this run
+c = app.test_client()
+r = c.get("/"); assert r.status_code == 302 and "/login" in r.location
+tok = csrf(check(c.get("/login")))
+check(c.post("/login", data={"csrf": tok, "name": "matt", "password": "wrong"}), has=["Wrong name or password"])
+assert c.post("/login", data={"csrf": "bad", "name": "matt", "password": "testpass123"}).status_code == 400
+r = c.post("/login?next=//evil.com", data={"csrf": tok, "name": "Matt", "password": "testpass123"}); assert r.location == "/", r.location
+c, tok = sign_in("matt", "testpass123")
+sam, stok = sign_in("sam", "testpass456")
+ev = [r["action"] for r in fresh().execute("select action from events where entity='user' and id > ? order by id", (START,))]
+assert ev.count("signed_in") == 3 and "sign_in_failed" in ev, ev
+
+# --- drafts from the database ---
+check(c.get("/"), has=["Hi matt", "To ship", "batch1"])
+check(c.get("/drafts"), has=["batch1"])
+check(c.get("/drafts/batch1"), has=["MV-00005", "needs work", "published"])
+check(c.get("/drafts/batch1/MV-00005"), has=["Before publishing", "eapot", "Estimate $12.80", 'name="version"'])
+check(c.get("/drafts/batch1/MV-00001"), has=["Published as listing", "disabled"])
+assert c.get("/drafts/nope").status_code == 404 and c.get("/drafts/batch1/MV-99999").status_code == 404
+assert c.get("/photos/batch1/MV-00005-1.jpg").mimetype == "image/jpeg"
+assert c.get("/photos/batch1/../drafts.json").status_code == 404
+
+_, item = drafts.get(fresh(), "MV-00005")
+form = {"csrf": tok, "version": str(item["_version"]), "title": item["title"], "price": "14.5", "condition": item["condition"],
+        "condition_description": item["condition_description"], "category_id": item["category_id"],
+        "description": item["description"], "aspects": "\n".join("%s: %s" % (k, " | ".join(v)) for k, v in item["aspects"].items()),
+        "needs_check": "", "comp_query": item.get("comp_query", ""), "skip": "",
+        **{k: str(v) for k, v in item["package"].items()}}
+check(c.post("/drafts/batch1/MV-00005", data={**form, "price": "abc"}), has=["Price must be a number"])
+assert drafts.get(fresh(), "MV-00005")[1]["price"] == item["price"], "bad price must not save"
+# publish blocked while a question is open
+check(c.post("/drafts/batch1/MV-00005", data={**form, "needs_check": "Is the lid there?", "then": "publish"}, follow_redirects=True), has=["not published: Open question"])
+assert not calls
+# sam saved in between -> matt's stale save is refused
+v = drafts.get(fresh(), "MV-00005")[1]["_version"]
+check(sam.post("/drafts/batch1/MV-00005", data={**form, "csrf": stok, "version": str(v), "needs_check": "Sam's question"}, follow_redirects=True), has=["Saved."])
+check(c.post("/drafts/batch1/MV-00005", data={**form, "version": str(v), "then": "publish"}), has=["sam saved this draft", "Save again"])
+assert drafts.get(fresh(), "MV-00005")[1]["needs_check"] == ["Sam's question"] and not calls
+v = drafts.get(fresh(), "MV-00005")[1]["_version"]
+r = c.post("/drafts/batch1/MV-00005", data={**form, "version": str(v), "then": "publish"}, follow_redirects=True)
+check(r, has=["Saved.", "published as listing 999"])
+d = drafts.get(fresh(), "MV-00005")[1]
+assert d["price"] == 14.5 and d["needs_check"] == [] and d["aspects"] == item["aspects"] and d["description"] == item["description"]
+assert fresh().execute("select price, status from items where sku='MV-00005'").fetchone()[0] == 14.5
+assert calls[-1] == ({"MV-00005"}, 1, "web"), calls
+check(c.post("/drafts/batch1/MV-00001", data={**form, "then": "save"}, follow_redirects=True), has=["Already published"])
+check(c.post("/drafts/batch1/publish", data={"csrf": tok}, follow_redirects=True), has=["published as listing 999"])
+check(c.post("/drafts/batch1/MV-00005/comps", data={"csrf": tok}, follow_redirects=True), has=["Price estimate updated"])
+assert calls[-1] == ("comps", {"MV-00005"}, 1)
+edits = fresh().execute("select u.name, e.data from events e join users u on u.id=e.user_id where e.entity_id='MV-00005' and e.action='edited' and e.id > ? order by e.id", (START,)).fetchall()
+assert [e[0] for e in edits] == ["matt", "sam", "matt"], [tuple(e) for e in edits]
+
+# --- items, missing, relists ---
+to_ship = orders.pick_list(fresh())
+assert to_ship, "these checks need at least one sold, unshipped item"
+SHIP = to_ship[0]["sku"]
+check(c.get("/items?q=teapot"), has=["MV-00005"])
+check(c.get("/items?status=CANCELLED"), has=["MV-01385"])
+check(c.get("/items/MV-01074"), has=["Relisted as", "MV-00852"])
+check(c.get("/items/MV-00852"), has=["Relist of", "MV-01074"])
+check(c.get("/items/MV-01385"), has=['name="relisted_as"'])
+check(c.post("/items/MV-01385", data={"csrf": tok, "relisted_as": "MV-99999", "status": "CANCELLED"}, follow_redirects=True), has=["Unknown SKU MV-99999"])
+check(c.get("/relists"), has=["Not relisted yet", "MV-01385"])
+check(c.post("/items/%s" % SHIP, data={"csrf": tok, "tote": "e3", "status": "BOUGHT", "note": ""}, follow_redirects=True), has=["Moved to E3"])
+check(c.post("/items/%s/missing" % SHIP, data={"csrf": tok, "missing": "1"}, follow_redirects=True), has=["missing since", "Found it"])
+check(c.get("/picklist"), has=[SHIP, "missing"])
+check(c.get("/items?status=MISSING"), has=[SHIP])
+check(sam.post("/items/%s/missing" % SHIP, data={"csrf": stok, "missing": "0", "back": "/totes/E3"}), code=302)
+assert fresh().execute("select missing_since from items where sku = ?", (SHIP,)).fetchone()[0] is None
+check(c.get("/items/%s" % SHIP), has=["matt", "sam", "missing", "found", "moved"])
+
+# --- totes ---
+conn = fresh()
+def onhand(code): return db.on_hand(fresh(), code)
+FREE = db.suggest_tote(conn)
+check(c.get("/totes"), has=["Next free tote ID: <strong>%s</strong>" % FREE, "Combine totes", "Checked"])
+check(c.get("/totes/consolidate?codes=G3", follow_redirects=True), has=["at least two totes"])
+check(c.get("/totes/consolidate?codes=G3+zz", follow_redirects=True), has=["isn&#39;t a tote code"])
+g3, c1 = onhand("G3"), onhand("C1")
+check(c.get("/totes/consolidate?codes=g3 c1"), has=["Combine G3 + C1", "labelled <strong>%s</strong>" % FREE])
+check(c.post("/totes/consolidate", data={"csrf": tok, "codes": "G3 C1", "into": "custom", "custom": "B2"}, follow_redirects=True), has=["B2 already has items"])
+check(sam.post("/totes/consolidate", data={"csrf": stok, "codes": "G3 C1", "into": FREE}, follow_redirects=True), has=["Moved %d items into %s" % (len(g3) + len(c1), FREE)])
+assert sorted(onhand(FREE)) == sorted(g3 + c1) and not onhand("G3") and not onhand("C1")
+t = onhand(FREE)
+check(c.get("/totes/" + FREE), has=["Move to", "to_" + t[0], "Never checked", ">Missing<"])
+check(c.post("/totes/" + FREE, data={"csrf": tok, "to_" + t[0]: "t9", "to_" + t[1]: "t9", "to_" + t[2]: "u7"}, follow_redirects=True), has=["Moved 3 items: 2 to T9, 1 to U7"])
+check(c.post("/totes/" + FREE, data={"csrf": tok, "to_" + t[3]: "bad code"}, follow_redirects=True), has=["isn&#39;t a tote code"])
+check(c.post("/totes/" + FREE, data={"csrf": tok, "to_" + SHIP: "T9"}, follow_redirects=True), has=["Not in %s: %s" % (FREE, SHIP)])
+check(c.post("/items/%s/missing" % t[3], data={"csrf": tok, "missing": "1", "back": "/totes/" + FREE}, follow_redirects=True), has=["Found"])
+check(c.post("/totes/%s/checked" % FREE, data={"csrf": tok}, follow_redirects=True), has=["Last checked", "by matt"])
+loc = fresh().execute("select e.action, u.name, e.data from events e join users u on u.id=e.user_id where entity='location' and entity_id in ('G3', 'C1', ?) and e.id > ? order by e.id", (FREE, START)).fetchall()
+assert [(r[0], r[1]) for r in loc] == [("merged", "sam"), ("merged", "sam"), ("split", "matt"), ("checked", "matt")], [tuple(r) for r in loc]
+assert json.loads(loc[-1][2]) == {"on_hand": len(t) - 3, "missing": 1}, loc[-1][2]
+check(c.get("/totes"), has=[FREE])
+
+# --- shipping, numbers, activity ---
+check(c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "PACKAGED", "days": ""}, follow_redirects=True), has=["packaged"])
+assert c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "DELIVERED"}).status_code == 400
+check(c.get("/sales"), has=["Item sales", "By month", "By sale price", "Listed now"])
+check(c.get("/activity"), has=["Last 30 days by person", "matt", "sam", "signed in"])
+check(c.get("/activity?who=sam"), has=["merged"])
+check(c.get("/activity?q=" + SHIP), has=["missing", "found"])
+nouser = fresh().execute("select count(*) from events where user_id is null and actor = 'web' and action <> 'sign_in_failed' and id > ?", (START,)).fetchone()[0]
+assert nouser == 0, nouser
+c.post("/logout", data={"csrf": tok}); assert c.get("/").status_code == 302
+print("all checks passed")
+shutil.rmtree(S)

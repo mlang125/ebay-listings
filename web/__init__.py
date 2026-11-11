@@ -199,7 +199,7 @@ def _routes(app):
 
     @app.context_processor
     def helpers():
-        return {"csrf": session.get("csrf"), "env": config.ENV, "money": _money_fmt}
+        return {"csrf": session.get("csrf"), "env": config.ENV, "read_only": config.READ_ONLY, "money": _money_fmt}
 
     # --- sign in ---
 

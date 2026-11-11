@@ -14,3 +14,6 @@ __pycache__/
 
 # eBay CSV downloads and exports (business data)
 *.csv
+
+# Stray downloads
+*.dmg
