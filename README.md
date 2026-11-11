@@ -31,7 +31,7 @@ Run commands with `.venv/bin/python cli.py ...` (or `source .venv/bin/activate` 
 ## Web app
 
 ```sh
-.venv/bin/python cli.py user add <name> lister   # once per person (roles: admin, lister, shipper)
+.venv/bin/python cli.py user add <name> admin    # the first admin (after that, use the People page)
 .venv/bin/python cli.py user password <name>     # sets their web password; type it in your own terminal
 .venv/bin/python cli.py serve                    # http://127.0.0.1:5050 on this Mac
 .venv/bin/python cli.py serve --lan              # also reachable from phones/laptops on the home wifi
@@ -73,11 +73,18 @@ Pages (every table sorts by clicking a column header; the sort stays in the URL)
   - *Put items in*: type SKUs to move them into this tote.
 - **Pick list:** sold, unshipped items grouped by tote, with a *Print* layout. *Get new orders from eBay*
   runs the order sync. *Label printed* and *Packed* mark progress for us; eBay only shows "shipped" to the buyer.
+  Tick several items to mark them label printed, packed or dropped off together.
 
 - **Relists:** cancelled and returned items, with suggested links to the SKU each was relisted under
   (same title on a newer listing). Tick and save, or link one by hand from the item's page.
 - **Sales:** item sales, shipping paid by buyers, average sale, sell-through, cancellations, by month and by
   price, plus what's listed now and for how long.
+- **Checks:** records that look wrong (listed with no price or listing ID, titles over 80 characters, the
+  same title listed twice, sales with no order, cost at or above price), each linked to the item. The home
+  page points here when anything turns up.
+- **People** (click your name): who can sign in, their role and last sign-in. Admins add people, set
+  passwords and roles, and turn accounts off. Roles: admins do everything; listers can also publish drafts;
+  shippers do everything except publish and manage people.
 - **Activity:** everything that happened, newest first, filterable by person, action and SKU/tote, plus a
   30-day count per person (listed, edited, moved, labels, packed).
 
