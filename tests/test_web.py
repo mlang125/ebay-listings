@@ -302,7 +302,6 @@ assert c.get("/find?q=mv-1385").location.endswith("/items/MV-01385")
 assert c.get("/find?q=MV-01385").location.endswith("/items/MV-01385")
 assert c.get("/find?q=ot").location.endswith("/totes/OT")
 assert c.get("/find?q=e2").location.endswith("/totes/E2")
-assert "/items?q=teapot" in c.get("/find?q=teapot").location
 assert "/items?q=Z99" in c.get("/find?q=Z99").location, "a tote code with nothing in it falls back to search"
 check(c.get("/"), has=['action="/find"'])
 
@@ -444,6 +443,13 @@ assert "2 of %d in %s" % (len(in_tote), T) in page and '"/items/%s" rel="prev"' 
 if len(in_tote) > 2:
     assert '"/items/%s" rel="next"' % in_tote[2] in page
 assert 'rel="prev"' not in c.get("/items/" + in_tote[0]).get_data(as_text=True)
+
+# --- find box: one match opens the item ---
+one = next(r[0] for r in fresh().execute("select title from items i where title is not null and length(title) > 20"
+                                         " and (select count(*) from items j where j.title like '%' || i.title || '%') = 1 limit 1"))
+r = c.get("/find?q=" + one)
+assert r.status_code == 302 and "/items/MV-" in r.headers["Location"], r.headers.get("Location")
+assert "/items?q=" in c.get("/find?q=Disney").headers["Location"], "several matches show the list"
 
 # --- nav shows where you are ---
 for page, label in [("/items", "Items"), ("/items/MV-00005", "Items"), ("/totes", "Totes"), ("/picklist", "Pick list"), ("/checks", "Checks")]:

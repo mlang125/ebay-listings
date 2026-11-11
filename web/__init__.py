@@ -664,6 +664,11 @@ def _routes(app):
             return redirect(url_for("item", sku=sku))
         if q.upper() in db.PLACES or db.TOTE_CODE_RE.match(q.upper()) and q.upper() in db.totes_in_use(g.conn):
             return redirect(url_for("tote", code=q.upper()))
+        # Words that match exactly one item open it; anything else shows the list.
+        matches = g.conn.execute("SELECT sku FROM items WHERE sku LIKE ? OR title LIKE ? LIMIT 2",
+                                 ["%" + q + "%"] * 2).fetchall() if q else []
+        if len(matches) == 1:
+            return redirect(url_for("item", sku=matches[0]["sku"]))
         return redirect(url_for("items", q=q))
 
     def _item_filters():
