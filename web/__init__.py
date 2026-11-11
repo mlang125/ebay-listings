@@ -18,6 +18,7 @@ import segno
 from flask import Flask, abort, flash, g, redirect, render_template, request, send_from_directory, session, url_for
 from markupsafe import Markup
 from werkzeug.utils import secure_filename
+from werkzeug.exceptions import HTTPException
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from ebay import api, comps, config, db, drafts, listings, orders, sales
@@ -249,6 +250,20 @@ def _routes(app):
             session["csrf"] = secrets.token_hex(16)
         if request.method == "POST" and request.form.get("csrf") != session["csrf"]:
             abort(400, "Form expired. Go back, reload the page and try again.")
+
+    # Errors get a plain page in the app's own look, with a way back, instead of the bare default.
+    ERROR_TITLES = {400: "That didn't work", 403: "Not allowed", 404: "Not found", 405: "Not allowed",
+                    413: "Too big", 500: "Something went wrong"}
+
+    @app.errorhandler(HTTPException)
+    def http_error(e):
+        return render_template("error.html", code=e.code, title=ERROR_TITLES.get(e.code, e.name),
+                               message=e.description if e.code != 404 else None), e.code
+
+    @app.errorhandler(500)
+    def server_error(e):
+        # Flask has already written the traceback to the server's terminal.
+        return render_template("error.html", code=500, title=ERROR_TITLES[500], message=None), 500
 
     @app.teardown_request
     def close_db(exc):

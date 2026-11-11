@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block body %}
+<h1>{{ title }}</h1>
+{% if code == 404 %}<p>There's nothing at this address. It may have a typo, or the item or tote may not exist.</p>
+{% elif code == 500 %}<p>The app hit a problem showing this page. Nothing you did caused it; the details are in the server's
+  terminal window. Try again, and if it keeps happening, tell whoever runs the app what you clicked.</p>
+{% elif message %}<p>{{ message }}</p>{% endif %}
+<p><a href="javascript:history.back()">Go back</a> · <a href="{{ url_for('home') }}">Home</a></p>
+{% endblock %}

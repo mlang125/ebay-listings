@@ -451,6 +451,21 @@ r = c.get("/find?q=" + one)
 assert r.status_code == 302 and "/items/MV-" in r.headers["Location"], r.headers.get("Location")
 assert "/items?q=" in c.get("/find?q=Disney").headers["Location"], "several matches show the list"
 
+# --- error pages ---
+r = c.get("/items/MV-99999")
+assert r.status_code == 404 and "Not found" in r.get_data(as_text=True) and "Home</a>" in r.get_data(as_text=True)
+r = sam.post("/users", data={"csrf": stok, "action": "add", "name": "zed", "role": "admin", "password": "x" * 10})
+assert r.status_code == 403 and "Only admins can do that." in r.get_data(as_text=True)
+r = c.post("/items/MV-00005", data={"csrf": "wrong"})
+assert r.status_code == 400 and "Form expired" in r.get_data(as_text=True)
+boom_app = create_app(db_path=S + "/ebay.db", batches_dir=S + "/batches", inbox_dir=S + "/inbox")
+boom_app.config["PROPAGATE_EXCEPTIONS"] = False
+@boom_app.route("/boom")
+def boom():
+    raise RuntimeError("test: this traceback is expected")
+r = boom_app.test_client().get("/boom")
+assert r.status_code == 500 and "Something went wrong" in r.get_data(as_text=True), r.get_data(as_text=True)[:300]
+
 # --- nav shows where you are ---
 for page, label in [("/items", "Items"), ("/items/MV-00005", "Items"), ("/totes", "Totes"), ("/picklist", "Pick list"), ("/checks", "Checks")]:
     current = re.findall(r'aria-current="page">([^<]+)<', c.get(page).get_data(as_text=True))
