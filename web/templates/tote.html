@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Tote {{ code }}{% endblock %}
+{% from "_macros.html" import th with context %}
 {% block body %}
 <div class="head">
   <h1>{{ code }} <span class="muted">{{ rows|length }} on hand</span></h1>
@@ -42,7 +43,7 @@
     </span>
   </div>
   <table>
-    <tr><th>SKU</th><th>Status</th><th class="num">Price</th><th>Title</th><th>Move to</th><th></th></tr>
+    <tr>{{ th('SKU', 'sku') }}{{ th('Status', 'status') }}{{ th('Price', 'price', num=True) }}{{ th('Title', 'title') }}<th>Move to</th><th></th></tr>
     {% for r in rows %}
     <tr class="{{ 'missing' if r.missing_since else '' }}">
       <td><a href="{{ url_for('item', sku=r.sku) }}">{{ r.sku }}</a></td>

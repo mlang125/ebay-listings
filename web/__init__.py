@@ -163,6 +163,38 @@ def _apply_form(item, form):
     return changed
 
 
+# --- sorting ------------------------------------------------------------------
+
+
+def order_by(columns, default, default_desc=False, then="i.sku"):
+    """ORDER BY for ?sort=<key>&dir=asc|desc. Only keys in `columns` (key -> SQL expression,
+    or a tuple of them) are accepted, so the URL can't inject SQL. Remembers the choice in g.sort."""
+    key = request.args.get("sort", default)
+    if key not in columns:
+        key = default
+    desc = request.args.get("dir", "desc" if default_desc and key == default else "asc") == "desc"
+    g.sort = (key, desc)
+    exprs = columns[key] if isinstance(columns[key], tuple) else (columns[key],)
+    # NULLs (unknown tote, no price) go last in either direction.
+    parts = ["%s IS NULL, %s %s" % (e, e, "DESC" if desc else "ASC") for e in exprs]
+    return " ORDER BY " + ", ".join(parts) + (", " + then if then else "")
+
+
+def sort_url(key):
+    """Link for a column header: sort by `key`, flipping the direction if it's already the sort."""
+    current, desc = g.get("sort", (None, False))
+    args = request.args.to_dict()
+    args.pop("page", None)
+    args["sort"] = key
+    args["dir"] = "asc" if current == key and desc else "desc" if current == key else "asc"
+    return url_for(request.endpoint, **(request.view_args or {}), **args)
+
+
+def sort_mark(key):
+    current, desc = g.get("sort", (None, False))
+    return ("▼" if desc else "▲") if current == key else ""
+
+
 # --- request plumbing ----------------------------------------------------------
 
 
@@ -199,7 +231,8 @@ def _routes(app):
 
     @app.context_processor
     def helpers():
-        return {"csrf": session.get("csrf"), "env": config.ENV, "read_only": config.READ_ONLY, "money": _money_fmt}
+        return {"csrf": session.get("csrf"), "env": config.ENV, "read_only": config.READ_ONLY, "money": _money_fmt,
+                "sort_url": sort_url, "sort_mark": sort_mark}
 
     # --- sign in ---
 
@@ -392,7 +425,7 @@ def _routes(app):
         elif status:
             sql += " AND i.status = ?"
             params.append(status)
-        sql += " ORDER BY i.sku DESC LIMIT 301"
+        sql += order_by(ITEM_SORTS, "sku", default_desc=True) + " LIMIT 301"
         rows = g.conn.execute(sql, params).fetchall()
         return render_template("items.html", rows=rows[:300], more=len(rows) > 300, q=q, status=status, statuses=db.STATUSES)
 
@@ -477,7 +510,7 @@ def _routes(app):
             " SUM(i.status = 'LISTED') AS listed, SUM(i.status IN ('PENDING', 'SKIPPED', 'ENDED', 'CANCELLED', 'RETURNED')) AS unlisted,"
             " SUM(i.status IN ('BOUGHT', 'LABEL_PRINTED', 'PACKAGED')) AS to_ship"
             " FROM locations l LEFT JOIN items i ON i.location_id = l.id"
-            " GROUP BY l.id ORDER BY l.kind DESC, substr(l.code, 1, 1), CAST(substr(l.code, 2) AS INTEGER)"
+            " GROUP BY l.id" + order_by(TOTE_SORTS, "code", then="l.code")
         ).fetchall()
         return render_template("totes.html", rows=rows, suggestion=db.suggest_tote(g.conn))
 
@@ -537,7 +570,7 @@ def _routes(app):
             except ValueError as e:
                 flash(str(e), "error")
             return redirect(url_for("tote", code=code))
-        rows = g.conn.execute(ITEMS_SQL + " WHERE l.code = ? ORDER BY i.status, i.sku", (code,)).fetchall()
+        rows = g.conn.execute(ITEMS_SQL + " WHERE l.code = ?" + order_by(ITEM_SORTS, "status"), (code,)).fetchall()
         here = [r for r in rows if r["status"] not in db.GONE]
         gone = [r for r in rows if r["status"] in db.GONE]
         place = g.conn.execute("SELECT * FROM locations WHERE code = ?", (code,)).fetchone()
@@ -636,6 +669,23 @@ def _routes(app):
         return render_template("sales.html", s=sales.summary(g.conn), months=sales.by_month(g.conn),
                                bands=sales.price_bands(g.conn), active=sales.active(g.conn))
 
+
+# Sortable columns: URL key -> SQL.
+ITEM_SORTS = {
+    "sku": "i.sku",
+    "status": "i.status",
+    "tote": ("substr(l.code, 1, 1)", "CAST(substr(l.code, 2) AS INTEGER)"),
+    "price": "i.price",
+    "title": "lower(i.title)",
+}
+TOTE_SORTS = {
+    "code": ("l.kind = 'place'", "substr(l.code, 1, 1)", "CAST(substr(l.code, 2) AS INTEGER)"),
+    "listed": "listed",
+    "unlisted": "unlisted",
+    "to_ship": "to_ship",
+    "missing": "missing",
+    "checked": "l.checked_at",
+}
 
 ITEMS_SQL = """
     SELECT i.*, l.code AS tote,

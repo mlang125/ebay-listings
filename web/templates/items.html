@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Items{% endblock %}
+{% from "_macros.html" import th with context %}
 {% block body %}
 <h1>Items</h1>
 <form class="filters">
@@ -9,10 +10,11 @@
     {% for s in statuses %}<option {% if s == status %}selected{% endif %}>{{ s }}</option>{% endfor %}
     <option value="MISSING" {% if status == 'MISSING' %}selected{% endif %}>Marked missing</option>
   </select>
+  {% if request.args.sort %}<input type="hidden" name="sort" value="{{ request.args.sort }}"><input type="hidden" name="dir" value="{{ request.args.dir }}">{% endif %}
   <button>Search</button>
 </form>
 <table>
-  <tr><th>SKU</th><th>Status</th><th>Tote</th><th class="num">Price</th><th>Title</th></tr>
+  <tr>{{ th('SKU', 'sku') }}{{ th('Status', 'status') }}{{ th('Tote', 'tote') }}{{ th('Price', 'price', num=True) }}{{ th('Title', 'title') }}</tr>
   {% for r in rows %}
   <tr>
     <td><a href="{{ url_for('item', sku=r.sku) }}">{{ r.sku }}</a></td>

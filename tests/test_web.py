@@ -143,6 +143,27 @@ assert [(r[0], r[1]) for r in loc] == [("merged", "sam"), ("merged", "sam"), ("s
 assert json.loads(loc[-1][2]) == {"on_hand": len(t) - 3, "missing": 1}, loc[-1][2]
 check(c.get("/totes"), has=[FREE])
 
+# --- sorting ---
+def prices(html): return [float(x.replace(",", "")) for x in re.findall(r'<td class="num">\$([\d,]+\.\d\d)</td>', html)]
+def skus(html): return re.findall(r'href="/items/(MV-\d+)"', html)
+p = prices(check(c.get("/items?status=LISTED&sort=price&dir=desc"), has=["▼"]))
+assert len(p) > 10 and p == sorted(p, reverse=True), p[:10]
+p = prices(check(c.get("/items?status=LISTED&sort=price&dir=asc"), has=["▲"]))
+assert p == sorted(p), p[:10]
+k = skus(check(c.get("/items?status=LISTED")))
+assert k == sorted(k, reverse=True), "default is newest SKU first"
+body = check(c.get("/items?status=LISTED&sort=price"))
+assert "sort=price&amp;dir=desc" in body or "dir=desc&amp;sort=price" in body or "dir=desc" in body, "clicking the current column flips it"
+assert "status=LISTED" in re.search(r'<a class="sort" href="([^"]+)"', body).group(1), "sort links keep the filters"
+check(c.get("/items?sort=nonsense;drop table items&dir=sideways"))  # unknown key falls back, no SQL from the URL
+assert fresh().execute("select count(*) from items").fetchone()[0] > 0
+t = check(c.get("/totes?sort=listed&dir=desc"))
+listed = [int(x) for x in re.findall(r'<a href="/totes/[A-Z0-9]+">[A-Z0-9]+</a>(?:[^<]|<span[^>]*>[^<]*</span>)*</td>\s*<td class="num">(\d+)</td>', t)]
+assert len(listed) > 5 and listed == sorted(listed, reverse=True), listed[:10]
+tt = check(c.get("/totes/OT?sort=title"))
+titles = re.findall(r'<td class="num">[^<]*</td><td>([^<]*)</td>', tt)
+assert len(titles) > 5 and [x.lower() for x in titles] == sorted(x.lower() for x in titles), titles[:5]
+
 # --- shipping, numbers, activity ---
 check(c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "PACKAGED", "days": ""}, follow_redirects=True), has=["packaged"])
 assert c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "DELIVERED"}).status_code == 400

@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Totes{% endblock %}
+{% from "_macros.html" import th with context %}
 {% block body %}
 <h1>Totes</h1>
 <div class="grid">
@@ -18,7 +19,7 @@
   </div>
 </div>
 <table>
-  <tr><th>Tote</th><th class="num">Listed</th><th class="num">Not listed</th><th class="num">To ship</th><th class="num">Missing</th><th>Checked</th><th></th></tr>
+  <tr>{{ th('Tote', 'code') }}{{ th('Listed', 'listed', num=True) }}{{ th('Not listed', 'unlisted', num=True) }}{{ th('To ship', 'to_ship', num=True) }}{{ th('Missing', 'missing', num=True) }}{{ th('Checked', 'checked') }}<th></th></tr>
   {% for r in rows %}
   {% set n = (r.listed or 0) + (r.unlisted or 0) + (r.to_ship or 0) %}
   <tr class="{{ '' if n else 'muted' }}">
