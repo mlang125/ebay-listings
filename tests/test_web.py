@@ -486,6 +486,7 @@ with conn:
     conn.execute("UPDATE items SET title = ? WHERE sku = 'MV-00005'", ("x" * 85,))
     conn.execute("UPDATE items SET status = 'LISTED', price = NULL WHERE sku = 'MV-01385'")
 check(c.get("/checks"), has=["Title over 80 characters", "85 characters", "MV-00005", "Listed with no price", "MV-01385", "No problems:"])
+check(c.get("/checks"), has=['name="sku" value="MV-00005"', "Set status", 'name="back" value="/checks?"'])
 check(c.get("/"), has=["record problem", "/checks"])
 with conn:
     conn.executemany("UPDATE items SET title = ?, status = ?, price = ? WHERE sku = ?", [(t, st, p, sku) for sku, t, st, p in saved])

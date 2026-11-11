@@ -6,9 +6,9 @@
 </th>
 {%- endmacro %}
 
-{# Checkbox column header that ticks every row checkbox in the same form. #}
+{# Checkbox column header that ticks every row checkbox in the same table. #}
 {% macro tick_all() -%}
-<th class="tick"><input type="checkbox" aria-label="Tick all" onclick="this.form.querySelectorAll('input[name=sku]').forEach(function (b) { b.checked = this.checked; }, this); bulkCount(this.form)"></th>
+<th class="tick"><input type="checkbox" aria-label="Tick all" onclick="this.closest('table').querySelectorAll('input[name=sku]').forEach(function (b) { b.checked = this.checked; }, this); bulkCount(this.form)"></th>
 {%- endmacro %}
 
 {% macro tick(sku) -%}

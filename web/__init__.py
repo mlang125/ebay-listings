@@ -418,7 +418,9 @@ def _routes(app):
     def checks():
         """Records that look wrong. Nothing here changes anything; each row links to the item to fix."""
         found = _data_checks(g.conn)
-        return render_template("checks.html", found=[f for f in found if f[2]], clean=[f[0] for f in found if not f[2]])
+        return render_template("checks.html", found=[f for f in found if f[2]], clean=[f[0] for f in found if not f[2]],
+                               statuses=db.STATUSES, suggestion=db.suggest_tote(g.conn),
+                               codes=sorted(db.totes_in_use(g.conn) | set(db.PLACES)))
 
     # --- drafts ---
 

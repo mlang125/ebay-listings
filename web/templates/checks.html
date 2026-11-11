@@ -1,22 +1,32 @@
 {% extends "base.html" %}
 {% block title %}Checks{% endblock %}
+{% from "_macros.html" import tick, tick_all, bulk_bar with context %}
 {% block body %}
 <h1>Checks</h1>
-<p class="muted">Records that look wrong. Open an item to fix it; nothing changes from this page.</p>
+<p class="muted">Records that look wrong. Open an item to fix it, or tick items and use the bar at the bottom
+  (for example, set ended duplicates to <em>Ended</em>, or <em>Skipped</em> if they were never a separate item).</p>
+<datalist id="codes">{% for c in codes %}<option value="{{ c }}">{% endfor %}<option value="{{ suggestion }}">next free</option></datalist>
+{% if found %}
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}">
 {% for what, why, rows in found %}
 <section>
   <h2>{{ what }} <span class="muted">{{ rows|length }}{{ '+' if rows|length == 100 else '' }}</span></h2>
   <p class="muted small">{{ why }}</p>
   <table class="itemrows">
+    <tr>{{ tick_all() }}<th>SKU</th><th>Title</th><th></th></tr>
     {% for r in rows %}
-    <tr><td class="nowrap"><a href="{{ url_for('item', sku=r[0]) }}">{{ r[0] }}</a></td><td class="title">{{ r[1] or '(no title)' }}</td>
+    <tr>{{ tick(r[0]) }}<td class="nowrap"><a href="{{ url_for('item', sku=r[0]) }}">{{ r[0] }}</a></td><td class="title">{{ r[1] or '(no title)' }}</td>
         <td class="muted small">{{ r[2] if r[2] is not none else '' }}</td></tr>
     {% endfor %}
   </table>
 </section>
+{% endfor %}
+{{ bulk_bar(statuses, request.full_path, suggestion) }}
+</form>
 {% else %}
 <p>Everything looks right.</p>
-{% endfor %}
+{% endif %}
 {% if clean %}
 <p class="muted small">No problems: {{ clean|join(' · ') }}.</p>
 {% endif %}
