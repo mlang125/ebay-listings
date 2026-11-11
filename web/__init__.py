@@ -1004,6 +1004,23 @@ def _routes(app):
                  "count": len(db.on_hand(g.conn, c))} for c in codes]
         return render_template("labels.html", labels=made, base=base, label_url_set=bool(config.LABEL_URL))
 
+    @app.route("/stickers")
+    @login_required
+    def stickers():
+        """Small SKU stickers (2.25 x 1.25 in): the SKU, a short title and a QR code that opens the item."""
+        skus = list(dict.fromkeys(_sku(s) for s in request.args.getlist("sku")
+                                  + re.split(r"[\s,]+", request.args.get("skus", "")) if s.strip()))
+        rows = {r["sku"]: r for r in g.conn.execute(
+            "SELECT i.sku, i.title, l.code AS tote FROM items i LEFT JOIN locations l ON l.id = i.location_id"
+            " WHERE i.sku IN (%s)" % ",".join("?" * len(skus)), skus)} if skus else {}
+        unknown = [s for s in skus if s not in rows]
+        if unknown:
+            flash("Unknown SKU: %s." % ", ".join(unknown), "error")
+        base = config.LABEL_URL or request.host_url.rstrip("/")
+        made = [{"sku": s, "title": rows[s]["title"] or "", "tote": rows[s]["tote"],
+                 "qr": _qr_svg(base + url_for("item", sku=s))} for s in skus if s in rows]
+        return render_template("stickers.html", stickers=made, skus=" ".join(skus))
+
     @app.route("/totes/<code>/count", methods=["GET", "POST"])
     @login_required
     def tote_count(code):

@@ -147,6 +147,15 @@ ul.attention a { text-decoration: none; color: var(--text); display: block; }
 ul.attention a strong { display: inline-block; min-width: 2.5em; color: var(--accent); }
 
 /* Tote labels: 4x6 inches, one per printed page. */
+.stickers { display: flex; flex-wrap: wrap; gap: 12px; }
+.sticker { width: 2.25in; height: 1.25in; box-sizing: border-box; padding: 0.06in; display: flex; gap: 0.06in; align-items: center;
+           background: #fff; color: #000; border: 1px dashed var(--line); border-radius: 4px; overflow: hidden;
+           font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; }
+.sticker svg.qr { width: 1.05in; height: 1.05in; flex: none; }
+.sticker-text { min-width: 0; }
+.sticker-sku { font-size: 13pt; font-weight: 800; white-space: nowrap; }
+.sticker-title { font-size: 6.5pt; line-height: 1.15; max-height: 4.6em; overflow: hidden; }
+.sticker-tote { font-size: 9pt; font-weight: 600; margin-top: 2px; }
 .labels { display: flex; flex-wrap: wrap; gap: 16px; }
 .label { width: 4in; height: 6in; background: #fff; color: #000; border: 1px dashed var(--line); border-radius: 8px;
          display: flex; flex-direction: column; align-items: center; justify-content: space-between; padding: 0.25in; }
@@ -156,6 +165,8 @@ ul.attention a strong { display: inline-block; min-width: 2.5em; color: var(--ac
 @media print {
   .labels { display: block; }
   .label { border: 0; border-radius: 0; break-after: page; margin: 0; }
+  .stickers { display: block; }
+  .sticker { border: 0; border-radius: 0; break-after: page; margin: 0; }
 }
 
 /* Phones: one scrolling row of links, tables that scroll sideways, low-priority columns hidden. */

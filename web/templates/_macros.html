@@ -33,6 +33,9 @@
     <button formaction="{{ url_for('items_bulk') }}" name="action" value="drop">Suggest % lower price</button>
   </span>
   <span class="bulk-group">
+    <button formaction="{{ url_for('stickers') }}" formmethod="get" formtarget="_blank">Stickers</button>
+  </span>
+  <span class="bulk-group">
     <select name="status" aria-label="New status"><option value="">Status…</option>
       {% for s in statuses %}<option value="{{ s }}">{{ s|replace('_', ' ')|lower|capitalize }}</option>{% endfor %}</select>
     <input name="note" placeholder="why (optional)" size="12" aria-label="Note for the status change">

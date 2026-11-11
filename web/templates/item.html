@@ -4,6 +4,7 @@
 <h1>{{ row.sku }} <span class="tag">{{ row.status }}</span>
   {% if row.missing_since %}<span class="tag needs-work">missing since {{ row.missing_since[:10] }}</span>{% endif %}</h1>
 <p class="lead">{{ row.title }}</p>
+<p class="small"><a href="{{ url_for('stickers', skus=row.sku) }}">Print a SKU sticker</a></p>
 {% if photos %}
 <div class="photos small-photos">
   {% for batch, p in photos %}<a href="{{ url_for('photo', batch=batch, filename=p) }}" target="_blank"><img src="{{ url_for('photo', batch=batch, filename=p) }}" alt="photo {{ loop.index }}" loading="lazy"></a>{% endfor %}

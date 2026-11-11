@@ -192,7 +192,7 @@ Work items:
       LABEL_PRINTED (by "eBay labels" when we don't know who printed it).
 - [ ] **Packing station:** scan or click to mark items PACKAGED and SENT_TO_POST_OFFICE.
       Record who did it and which package type was used.
-- [ ] **SKU stickers:** a small barcode label printed at listing time for each item or
+- [x] **SKU stickers:** (QR code to the item's page, from the web app) a small barcode label printed at listing time for each item or
       tote, so scanning replaces typing.
 - [ ] **Tracking sync:** carrier scans and deliveries update statuses.
 - [ ] **Label cost capture:** from eBay's Finances API (Stage A) or the label provider (B/C),

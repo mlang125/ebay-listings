@@ -94,6 +94,8 @@ page). It keeps its tote, gets a "missing" tag everywhere including the pick lis
 *Count items* on a tote's page is for going through a tote with a phone: tick what's there and save. Anything
 not ticked is marked missing, ticked missing items are found again, SKUs typed in the box move into the tote,
 and the tote is recorded as checked. A wrong move can be undone with *Move back* in the item's history.
+*Stickers* (in the bar for ticked items, or *Print a SKU sticker* on an item's page) prints 2.25×1.25 in
+SKU stickers with a QR code that opens the item's page.
 
 **Who did what.** Every change is recorded in the event log with the person who made it: sign-ins, draft
 edits, publishes, comps, moves, combines, splits, missing/found, tote checks, status changes, order syncs

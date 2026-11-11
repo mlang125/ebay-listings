@@ -414,6 +414,12 @@ weeks = sales.by_week(fresh())
 assert len(weeks) == 8 and weeks[0][0].weekday() == 0 and weeks[0][1][1] >= moved_today
 check(c.get("/activity"), has=["By week", "(this week)", "Labels printed", "Shipped"])
 
+# --- SKU stickers ---
+check(c.get("/stickers?sku=MV-00005&skus=920+mv-99999"), has=["SKU stickers", "MV-00005", "MV-00920", '<svg', "Unknown SKU: MV-99999"])
+assert c.get("/stickers?sku=MV-00005").get_data(as_text=True).count('class="sticker"') == 1
+check(c.get("/items"), has=['formaction="/stickers"'])
+check(c.get("/items/MV-00005"), has=["Print a SKU sticker"])
+
 # --- nav shows where you are ---
 for page, label in [("/items", "Items"), ("/items/MV-00005", "Items"), ("/totes", "Totes"), ("/picklist", "Pick list"), ("/checks", "Checks")]:
     current = re.findall(r'aria-current="page">([^<]+)<', c.get(page).get_data(as_text=True))

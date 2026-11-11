@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}SKU stickers{% endblock %}
+{% block body %}
+{# Only this page prints at sticker size. #}
+<style>@media print { @page { size: 2.25in 1.25in; margin: 0; } }</style>
+<div class="noprint">
+  <div class="head">
+    <h1>SKU stickers <span class="muted">{{ stickers|length }}</span></h1>
+    {% if stickers %}<button class="primary" onclick="window.print()">Print</button>{% endif %}
+  </div>
+  <form class="filters">
+    <input name="skus" value="{{ skus }}" placeholder="SKUs, e.g. MV-00012 920" autocapitalize="characters">
+    <button>Show</button>
+  </form>
+  <p class="muted small">One 2.25×1.25 in sticker per page. Scanning the code opens the item's page.
+    Tick items on the Items or tote pages and press <em>Stickers</em> to get here with them filled in.</p>
+</div>
+<div class="stickers">
+  {% for s in stickers %}
+  <div class="sticker">
+    {{ s.qr }}
+    <div class="sticker-text">
+      <div class="sticker-sku">{{ s.sku }}</div>
+      <div class="sticker-title">{{ s.title[:60] }}</div>
+      {% if s.tote %}<div class="sticker-tote">{{ s.tote }}</div>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}
