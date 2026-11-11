@@ -208,3 +208,4 @@ ul.attention a strong { display: inline-block; min-width: 2.5em; color: var(--ac
 
 nav.top form.find input { margin: 0; padding: 4px 8px; width: 11em; min-height: 0; }
 @media (max-width: 640px) { nav.top form.find { order: -1; flex: 0 0 auto; } nav.top form.find input { width: 8.5em; } }
+tr.total td { font-weight: 600; border-top: 2px solid var(--line); }

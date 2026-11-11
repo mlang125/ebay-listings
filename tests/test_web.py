@@ -158,7 +158,7 @@ assert "sort=price&amp;dir=desc" in body or "dir=desc&amp;sort=price" in body or
 assert "status=LISTED" in re.search(r'<a class="sort" href="([^"]+)"', body).group(1), "sort links keep the filters"
 check(c.get("/items?sort=nonsense;drop table items&dir=sideways"))  # unknown key falls back, no SQL from the URL
 assert fresh().execute("select count(*) from items").fetchone()[0] > 0
-t = check(c.get("/totes?sort=listed&dir=desc"))
+t = check(c.get("/totes?sort=on_hand&dir=desc"), has=["Listed value", 'class="total"'])
 listed = [int(x) for x in re.findall(r'<a href="/totes/[A-Z0-9]+">[A-Z0-9]+</a>(?:[^<]|<span[^>]*>[^<]*</span>)*</td>\s*<td class="num">(\d+)</td>', t)]
 assert len(listed) > 5 and listed == sorted(listed, reverse=True), listed[:10]
 tt = check(c.get("/totes/OT?sort=title"))

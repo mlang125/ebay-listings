@@ -21,15 +21,24 @@
 </div>
 {% if unchecked %}<p>Showing totes with items on hand that nobody has checked yet. <a href="{{ url_for('totes') }}">Show all totes</a></p>{% endif %}
 <table>
-  <tr>{{ th('Tote', 'code') }}{{ th('Listed', 'listed', num=True) }}{{ th('Not listed', 'unlisted', num=True) }}{{ th('To ship', 'to_ship', num=True) }}{{ th('Missing', 'missing', num=True) }}{{ th('Checked', 'checked', opt=True) }}<th class="opt"></th></tr>
+  <tr>{{ th('Tote', 'code') }}{{ th('On hand', 'on_hand', num=True) }}{{ th('Listed', 'listed', num=True) }}{{ th('Not listed', 'unlisted', num=True) }}{{ th('To ship', 'to_ship', num=True) }}{{ th('Missing', 'missing', num=True) }}{{ th('Listed value', 'value', num=True, opt=True) }}{{ th('Checked', 'checked', opt=True) }}<th class="opt"></th></tr>
   {% for r in rows %}
   {% set n = (r.listed or 0) + (r.unlisted or 0) + (r.to_ship or 0) %}
   <tr class="{{ '' if n else 'muted' }}">
     <td><a href="{{ url_for('tote', code=r.code) }}">{{ r.code }}</a>{% if not n %} <span class="muted small">empty</span>{% endif %}</td>
+    <td class="num">{{ r.on_hand or 0 }}</td>
     <td class="num">{{ r.listed or 0 }}</td><td class="num">{{ r.unlisted or 0 }}</td><td class="num">{{ r.to_ship or 0 }}</td>
-    <td class="num">{{ r.missing or '' }}</td><td class="small opt">{{ (r.checked_at or '')[:10] }}</td>
+    <td class="num">{{ r.missing or '' }}</td><td class="num opt">{{ money(r.value) }}</td><td class="small opt">{{ (r.checked_at or '')[:10] }}</td>
     <td class="muted small opt">{{ r.notes or '' }}</td>
   </tr>
   {% endfor %}
+  {% if rows|length > 1 %}
+  <tr class="total"><td>All</td><td class="num">{{ rows|map(attribute='on_hand')|map('default', 0, true)|sum }}</td>
+    <td class="num">{{ rows|map(attribute='listed')|map('default', 0, true)|sum }}</td>
+    <td class="num">{{ rows|map(attribute='unlisted')|map('default', 0, true)|sum }}</td>
+    <td class="num">{{ rows|map(attribute='to_ship')|map('default', 0, true)|sum }}</td>
+    <td class="num">{{ rows|map(attribute='missing')|map('default', 0, true)|sum or '' }}</td>
+    <td class="num opt">{{ money(rows|map(attribute='value')|map('default', 0, true)|sum) }}</td><td class="opt"></td><td class="opt"></td></tr>
+  {% endif %}
 </table>
 {% endblock %}

@@ -713,7 +713,9 @@ def _routes(app):
         rows = g.conn.execute(
             "SELECT l.code, l.kind, l.notes, l.checked_at, SUM(i.missing_since IS NOT NULL AND i.status NOT IN ('SENT_TO_POST_OFFICE', 'DELIVERED')) AS missing,"
             " SUM(i.status = 'LISTED') AS listed, SUM(i.status IN ('PENDING', 'SKIPPED', 'ENDED', 'CANCELLED', 'RETURNED')) AS unlisted,"
-            " SUM(i.status IN ('BOUGHT', 'LABEL_PRINTED', 'PACKAGED')) AS to_ship"
+            " SUM(i.status IN ('BOUGHT', 'LABEL_PRINTED', 'PACKAGED')) AS to_ship,"
+            " SUM(i.status NOT IN ('SENT_TO_POST_OFFICE', 'DELIVERED')) AS on_hand,"
+            " SUM(CASE WHEN i.status = 'LISTED' THEN i.price END) AS value"
             " FROM locations l LEFT JOIN items i ON i.location_id = l.id"
             + (" WHERE l.kind = 'tote' AND l.checked_at IS NULL" if request.args.get("unchecked") else "")
             + " GROUP BY l.id"
@@ -916,6 +918,8 @@ TOTE_SORTS = {
     "to_ship": "to_ship",
     "missing": "missing",
     "checked": "l.checked_at",
+    "on_hand": "on_hand",
+    "value": "value",
 }
 
 ITEMS_SQL = """
