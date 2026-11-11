@@ -17,7 +17,7 @@ import segno
 from flask import Flask, abort, flash, g, redirect, render_template, request, send_from_directory, session, url_for
 from markupsafe import Markup
 from werkzeug.utils import secure_filename
-from werkzeug.security import check_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from ebay import api, comps, config, db, drafts, listings, orders, sales
 
@@ -217,6 +217,12 @@ def login_required(view):
         return view(*args, **kwargs)
 
     return wrapped
+
+
+def require_role(*roles):
+    """Stop with 403 unless the signed-in person has one of these roles."""
+    if g.user is None or g.user["role"] not in roles:
+        abort(403, "Only %s can do that." % " or ".join(r + "s" for r in roles))
 
 
 def _routes(app):
@@ -482,6 +488,7 @@ def _routes(app):
         return _publish(batch, ready, back=url_for("batch", batch=batch))
 
     def _publish(batch, skus, back):
+        require_role("admin", "lister")
         batch_drafts = _load_batch(batch)
         blocked = {i["sku"]: problems(i) for i in batch_drafts["items"] if i["sku"] in skus and draft_state(i) != "ready"}
         for sku, found in blocked.items():
@@ -968,6 +975,65 @@ def _routes(app):
         except (api.EbayError, SystemExit) as e:
             flash("Order sync failed: %s" % e, "error")
         return redirect(request.form.get("back") or url_for("picklist"))
+
+    # --- people ---
+
+    @app.route("/users", methods=["GET", "POST"])
+    @login_required
+    def users():
+        """Admins add people, reset passwords and turn accounts off. Everything is logged."""
+        if request.method == "POST":
+            require_role("admin")
+            form = request.form
+            action, name = form.get("action"), form.get("name", "").strip().lower()
+            password = form.get("password", "")
+            try:
+                with g.conn:
+                    if action == "add":
+                        if not re.fullmatch(r"[a-z][a-z0-9_.-]{1,30}", name):
+                            raise ValueError("Names are 2-31 letters or digits, starting with a letter.")
+                        if form.get("role") not in db.ROLES:
+                            raise ValueError("Pick a role.")
+                        if g.conn.execute("SELECT 1 FROM users WHERE name = ?", (name,)).fetchone():
+                            raise ValueError("There's already a %s." % name)
+                        if len(password) < 8:
+                            raise ValueError("Passwords need at least 8 characters.")
+                        g.conn.execute("INSERT INTO users (name, role, created_at, password_hash) VALUES (?, ?, ?, ?)",
+                                       (name, form["role"], db.now(), generate_password_hash(password)))
+                        done = "Added %s (%s)." % (name, form["role"])
+                    else:
+                        target = g.conn.execute("SELECT * FROM users WHERE name = ?", (name,)).fetchone()
+                        if target is None:
+                            raise ValueError("No user %s." % name)
+                        if action == "password":
+                            if len(password) < 8:
+                                raise ValueError("Passwords need at least 8 characters.")
+                            g.conn.execute("UPDATE users SET password_hash = ? WHERE id = ?",
+                                           (generate_password_hash(password), target["id"]))
+                            done = "New password set for %s." % name
+                        elif action in ("disable", "enable"):
+                            if target["id"] == g.user["id"]:
+                                raise ValueError("You can't turn off your own account.")
+                            g.conn.execute("UPDATE users SET active = ? WHERE id = ?", (action == "enable", target["id"]))
+                            done = "%s is %s." % (name, "back on" if action == "enable" else "turned off and can't sign in")
+                        elif action == "role" and form.get("role") in db.ROLES:
+                            if target["id"] == g.user["id"] and form["role"] != "admin":
+                                raise ValueError("You can't take away your own admin role.")
+                            g.conn.execute("UPDATE users SET role = ? WHERE id = ?", (form["role"], target["id"]))
+                            done = "%s is now a %s." % (name, form["role"])
+                        else:
+                            raise ValueError("Pick an action.")
+                    db.log_event(g.conn, "user", name, "user_" + action, "web", g.user["id"],
+                                 data={"role": form.get("role")} if action in ("add", "role") else None)
+                flash(done, "ok")
+            except ValueError as e:
+                flash(str(e), "error")
+            return redirect(url_for("users"))
+        rows = g.conn.execute(
+            "SELECT u.*, (SELECT MAX(at) FROM events WHERE entity = 'user' AND entity_id = u.name AND action = 'signed_in') AS last_in,"
+            " (SELECT COUNT(*) FROM events WHERE user_id = u.id) AS changes"
+            " FROM users u ORDER BY u.active DESC, u.name").fetchall()
+        return render_template("users.html", rows=rows, roles=db.ROLES, is_admin=g.user["role"] == "admin")
 
     # --- activity and numbers ---
 

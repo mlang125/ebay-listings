@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}People{% endblock %}
+{% block body %}
+<h1>People</h1>
+<p class="muted small">Admins manage everyone; listers can publish drafts; shippers handle the pick list. Everyone can move items and edit records.</p>
+<table>
+  <tr><th>Name</th><th>Role</th><th>Last signed in</th><th class="num">Changes made</th><th>{% if is_admin %}Change{% endif %}</th></tr>
+  {% for u in rows %}
+  <tr class="{{ '' if u.active else 'muted' }}">
+    <td><a href="{{ url_for('activity', who=u.name) }}">{{ u.name }}</a>{% if not u.active %} <span class="tag">off</span>{% endif %}
+      {% if not u.password_hash %} <span class="muted small">(no web password)</span>{% endif %}</td>
+    <td>{{ u.role }}</td>
+    <td class="small">{{ (u.last_in or 'never').replace('T', ' ')[:16] }}</td>
+    <td class="num">{{ u.changes }}</td>
+    <td>
+      {% if is_admin %}
+      <details>
+        <summary>Change</summary>
+        <form method="post" class="row">
+          <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="name" value="{{ u.name }}">
+          <label>Role <select name="role">{% for r in roles %}<option {% if r == u.role %}selected{% endif %}>{{ r }}</option>{% endfor %}</select></label>
+          <button name="action" value="role">Set role</button>
+        </form>
+        <form method="post" class="row">
+          <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="name" value="{{ u.name }}">
+          <label>New password <input name="password" type="password" minlength="8" autocomplete="new-password"></label>
+          <button name="action" value="password">Set password</button>
+        </form>
+        <form method="post">
+          <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="name" value="{{ u.name }}">
+          {% if u.active %}<button name="action" value="disable">Turn off</button>{% else %}<button name="action" value="enable">Turn back on</button>{% endif %}
+        </form>
+      </details>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+{% if is_admin %}
+<form method="post" class="card">
+  <h2>Add someone</h2>
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="row">
+    <label>Name <input name="name" required autocapitalize="none" autocomplete="off"></label>
+    <label>Role <select name="role">{% for r in roles %}<option {% if r == 'lister' %}selected{% endif %}>{{ r }}</option>{% endfor %}</select></label>
+    <label>Password <input name="password" type="password" minlength="8" required autocomplete="new-password"></label>
+    <button class="primary" name="action" value="add">Add</button>
+  </div>
+  <p class="muted small">They sign in with the name and password; tell them the password in person.</p>
+</form>
+{% endif %}
+{% endblock %}

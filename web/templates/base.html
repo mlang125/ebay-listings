@@ -24,7 +24,7 @@
     <span class="spacer"></span>
     {% if env != 'production' %}<span class="tag warn">{{ env }}</span>{% endif %}
     {% if read_only %}<span class="tag warn" title="EBAY_READ_ONLY is set in .env: nothing can be published or changed on eBay">eBay read-only</span>{% endif %}
-    <span class="who">{{ g.user.name }}</span>
+    <a href="{{ url_for('users') }}" class="who">{{ g.user.name }}</a>
     <form method="post" action="{{ url_for('logout') }}" class="inline">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <button class="link">Sign out</button>

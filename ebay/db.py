@@ -191,6 +191,9 @@ def user_id(conn, name):
     return row["id"]
 
 
+ROLES = ("admin", "lister", "shipper")
+
+
 def add_user(conn, name, role="admin"):
     with conn:
         conn.execute("INSERT INTO users (name, role, created_at) VALUES (?, ?, ?)", (name, role, now()))

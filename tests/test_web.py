@@ -353,6 +353,26 @@ check(c.post("/drafts/upload", data={"csrf": tok, "tote": "bad tote", "photos": 
       has=["isn&#39;t a tote code"])
 assert len([d for d in os.listdir(os.path.join(S, "inbox")) if d.startswith("t5-")]) == 1
 
+# --- people and roles ---
+check(c.get("/users"), has=["People", "Add someone", "sam", "lister"])
+check(sam.get("/users"), has=["People"])
+assert "Add someone" not in sam.get("/users").get_data(as_text=True), "only admins see the controls"
+assert sam.post("/users", data={"csrf": stok, "action": "add", "name": "eve", "role": "admin", "password": "x" * 10}).status_code == 403
+check(c.post("/users", data={"csrf": tok, "action": "add", "name": "Kim", "role": "shipper", "password": "short"}, follow_redirects=True), has=["at least 8"])
+check(c.post("/users", data={"csrf": tok, "action": "add", "name": "Kim", "role": "shipper", "password": "kimpass123"}, follow_redirects=True), has=["Added kim (shipper)"])
+check(c.post("/users", data={"csrf": tok, "action": "add", "name": "kim", "role": "shipper", "password": "kimpass123"}, follow_redirects=True), has=["already a kim"])
+kim, ktok = sign_in("kim", "kimpass123")
+# shippers can't publish
+assert kim.post("/drafts/batch1/publish", data={"csrf": ktok}).status_code == 403
+check(c.post("/users", data={"csrf": tok, "action": "disable", "name": "kim"}, follow_redirects=True), has=["turned off"])
+assert kim.get("/").status_code == 302, "a turned-off account is signed out"
+check(c.post("/users", data={"csrf": tok, "action": "disable", "name": "matt"}, follow_redirects=True), has=["your own account"])
+check(c.post("/users", data={"csrf": tok, "action": "role", "name": "matt", "role": "lister"}, follow_redirects=True), has=["your own admin role"])
+check(c.post("/users", data={"csrf": tok, "action": "enable", "name": "kim"}, follow_redirects=True), has=["back on"])
+check(c.post("/users", data={"csrf": tok, "action": "password", "name": "kim", "password": "newkimpass1"}, follow_redirects=True), has=["New password set"])
+sign_in("kim", "newkimpass1")
+assert [r[0] for r in fresh().execute("select action from events where entity = 'user' and entity_id = 'kim' and action like 'user_%' order by id")] == ["user_add", "user_disable", "user_enable", "user_password"]
+
 # --- shipping, numbers, activity ---
 check(c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "PACKAGED", "days": ""}, follow_redirects=True), has=["packaged"])
 assert c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "DELIVERED"}).status_code == 400
