@@ -613,6 +613,18 @@ def _routes(app):
                     for sku in skus:
                         db.set_status(g.conn, sku, status, "web", user, data={"note": note, "manual": True, "bulk": len(skus)})
                     done = "Set %d items to %s." % (len(skus), status)
+                elif action == "drop":
+                    percent = _float(request.form.get("percent"))
+                    if percent is None or not 0 < percent < 90:
+                        raise ValueError("Enter a price drop between 1 and 89 percent.")
+                    rows = g.conn.execute("SELECT sku, status, price FROM items WHERE sku IN (%s)" % ",".join("?" * len(skus)), skus).fetchall()
+                    not_listed = [r["sku"] for r in rows if r["status"] != "LISTED" or not r["price"]]
+                    if not_listed:
+                        raise ValueError("Only listed items with a price can get a price suggestion: %s" % ", ".join(not_listed))
+                    for r in rows:
+                        db.suggest_price(g.conn, r["sku"], db.price_drop(r["price"], percent), "web", user,
+                                         note="%g%% drop" % percent)
+                    done = "Suggested a %g%% lower price for %d items. Change them on eBay, then press Applied on each." % (percent, len(rows))
                 else:
                     raise ValueError("Pick an action.")
             flash(done, "ok")

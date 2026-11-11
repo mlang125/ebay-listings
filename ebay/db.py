@@ -394,6 +394,15 @@ def suggest_price(conn, sku, price, actor, user=None, note=None):
               data={"price": round(price, 2), "was": row["price"], "note": note})
 
 
+def price_drop(price, percent):
+    """`price` lowered by `percent`, ending in .99 (never above the lowered price, never below $0.99)."""
+    lowered = price * (1 - percent / 100.0)
+    ending = int(lowered) + 0.99
+    if ending > lowered:
+        ending -= 1
+    return round(max(ending, 0.99), 2)
+
+
 # The newest price suggestion for an item, if it came after the item's last price change or listing.
 LATEST_SUGGESTION = """(SELECT json_extract(e.data, '$.price') FROM events e
     WHERE e.entity = 'item' AND e.entity_id = i.sku AND e.action = 'price_suggested'

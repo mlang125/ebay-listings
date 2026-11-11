@@ -273,6 +273,17 @@ assert count(check(c.get("/items?status=SUGGESTED"))) == 0, "applying clears the
 who = [tuple(r) for r in fresh().execute("select e.action, u.name from events e join users u on u.id = e.user_id where e.entity_id = ? and e.id > ? order by e.id", (L, START))]
 assert ("price_suggested", "sam") in who and ("price_applied", "matt") in who and ("edited", "matt") in who, who
 
+# --- bulk price drop suggestions ---
+stale = [r[0] for r in fresh().execute("select i.sku from items i where i.status = 'LISTED' and i.price >= 10 and i.sku <> ? order by i.sku limit 3", (L,))]
+assert "Suggested a 20% lower price for 3 items" in bulk({"skus": stale, "action": "drop", "percent": "20"})
+for sku in stale:
+    price = fresh().execute("select price from items where sku = ?", (sku,)).fetchone()[0]
+    sug = fresh().execute("select json_extract(data, '$.price') from events where entity_id = ? and action = 'price_suggested' order by id desc", (sku,)).fetchone()[0]
+    assert sug == db.price_drop(price, 20) and str(sug).endswith(".99") and sug <= price * 0.8, (sku, price, sug)
+assert "between 1 and 89" in bulk({"skus": stale, "action": "drop", "percent": "95"})
+assert "Only listed items" in bulk({"skus": [C], "action": "drop", "percent": "10"})
+assert count(check(c.get("/items?status=SUGGESTED"))) == 3
+
 # --- shipping, numbers, activity ---
 check(c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "PACKAGED", "days": ""}, follow_redirects=True), has=["packaged"])
 assert c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "DELIVERED"}).status_code == 400
