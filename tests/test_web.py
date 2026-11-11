@@ -243,6 +243,36 @@ assert check(c.get("/labels")).count('class="label-code"') == in_use
 check(c.get("/totes/W9"), has=["Print label"])
 assert "4in 6in" not in open(os.path.join(ROOT, "web", "static", "style.css")).read(), "label page size must not leak into other printouts"
 
+# --- editing our records, price suggestions ---
+listed = fresh().execute("select sku, price from items where status = 'LISTED' and price is not null order by sku limit 1").fetchone()
+L, old_price = listed[0], listed[1]
+check(c.get("/items/" + L), has=["Our records", "Price on eBay", "follow the eBay listing"])
+check(c.post("/items/%s/edit" % L, data={"csrf": tok, "notes": "box dented", "cost": "$3.50", "cost_note": "lot of 10"}, follow_redirects=True),
+      has=["Saved: cost, cost_note, notes", "$3.50", "lot of 10", "notes: empty → box dented", "cost: empty → 3.50"])
+check(c.post("/items/%s/edit" % L, data={"csrf": tok, "notes": "box dented", "cost": "abc"}, follow_redirects=True), has=["Cost must be a number"])
+check(c.post("/items/%s/edit" % L, data={"csrf": tok, "notes": "box dented", "cost": "3.5", "cost_note": "lot of 10", "price": "1.00"}, follow_redirects=True),
+      has=["its title and price follow eBay"])
+assert fresh().execute("select price from items where sku = ?", (L,)).fetchone()[0] == old_price
+check(c.post("/items/%s/edit" % L, data={"csrf": tok, "notes": "", "cost": "", "cost_note": "lot of 10"}, follow_redirects=True), has=["unknown"])
+assert fresh().execute("select cost from items where sku = ?", (L,)).fetchone()[0] is None, "empty cost means unknown"
+C = "MV-01385"  # cancelled, not relisted: its title and price are ours
+check(c.get("/items/" + C), has=['name="title"', 'name="price"'])
+check(c.post("/items/%s/edit" % C, data={"csrf": tok, "title": "NVIDIA SHIELD K1 tablet (2 units?)", "price": "45", "notes": "", "cost": "", "cost_note": ""}, follow_redirects=True),
+      has=["Saved: price, title"])
+check(c.post("/items/%s/edit" % C, data={"csrf": tok, "title": "x" * 81, "price": "45"}, follow_redirects=True), has=["1 to 80 characters"])
+# suggestions
+check(c.post("/items/%s/suggest" % L, data={"csrf": tok, "price": "0"}, follow_redirects=True), has=["more than $0"])
+check(sam.post("/items/%s/suggest" % L, data={"csrf": stok, "price": "$7.99", "note": "120 days"}, follow_redirects=True),
+      has=["Price suggestion recorded", "Suggested price", "$7.99", "Applied $7.99 on eBay"])
+html = check(c.get("/items?status=SUGGESTED"))
+assert count(html) == 1 and L in html and "→ $7.99" in html
+assert "price suggestions to change on eBay" in check(c.get("/"))
+check(c.post("/items/%s/applied" % L, data={"csrf": tok, "price": "7.99"}, follow_redirects=True), has=["Recorded the new eBay price of $7.99"])
+assert fresh().execute("select price from items where sku = ?", (L,)).fetchone()[0] == 7.99
+assert count(check(c.get("/items?status=SUGGESTED"))) == 0, "applying clears the suggestion"
+who = [tuple(r) for r in fresh().execute("select e.action, u.name from events e join users u on u.id = e.user_id where e.entity_id = ? and e.id > ? order by e.id", (L, START))]
+assert ("price_suggested", "sam") in who and ("price_applied", "matt") in who and ("edited", "matt") in who, who
+
 # --- shipping, numbers, activity ---
 check(c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "PACKAGED", "days": ""}, follow_redirects=True), has=["packaged"])
 assert c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "DELIVERED"}).status_code == 400

@@ -204,3 +204,4 @@ ul.attention a strong { display: inline-block; min-width: 2.5em; color: var(--ac
   .bulk .bulk-group { flex-wrap: wrap; }
   .bulk .bulk-group input[name=note] { flex: 1 1 8em; }
 }
+.suggested { color: var(--warn); }

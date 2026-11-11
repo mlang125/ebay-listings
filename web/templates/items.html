@@ -9,6 +9,7 @@
     <option value="">Any status</option>
     {% for s in statuses %}<option value="{{ s }}" {% if s == f.status %}selected{% endif %}>{{ s|replace('_', ' ')|lower|capitalize }}</option>{% endfor %}
     <option value="ON_HAND" {% if f.status == 'ON_HAND' %}selected{% endif %}>On hand (not shipped)</option>
+    <option value="SUGGESTED" {% if f.status == 'SUGGESTED' %}selected{% endif %}>Price suggested</option>
     <option value="MISSING" {% if f.status == 'MISSING' %}selected{% endif %}>Marked missing</option>
   </select>
   <select name="tote" aria-label="Tote">
@@ -35,7 +36,7 @@
     <td class="nowrap"><a href="{{ url_for('item', sku=r.sku) }}">{{ r.sku }}</a></td>
     <td>{{ r.status }}{% if r.missing_since %} <span class="tag needs-work">missing</span>{% endif %}</td>
     <td>{% if r.tote %}<a href="{{ url_for('tote', code=r.tote) }}">{{ r.tote }}</a>{% else %}<span class="muted">?</span>{% endif %}</td>
-    <td class="num">{{ money(r.price) }}</td>
+    <td class="num">{{ money(r.price) }}{% if r.suggested_price %}<br><span class="small suggested">→ {{ money(r.suggested_price) }}</span>{% endif %}</td>
     <td class="title">{{ r.title }}</td>
     <td class="num opt">{{ r.days_listed if r.status == 'LISTED' and r.days_listed is not none else '' }}</td>
     <td class="nowrap small opt">{{ (r.last_change or '')[:10] }}</td>

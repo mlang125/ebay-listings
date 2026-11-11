@@ -235,7 +235,7 @@ def _routes(app):
     @app.context_processor
     def helpers():
         return {"csrf": session.get("csrf"), "env": config.ENV, "read_only": config.READ_ONLY, "money": _money_fmt,
-                "sort_url": sort_url, "sort_mark": sort_mark}
+                "sort_url": sort_url, "sort_mark": sort_mark, "event_details": event_details}
 
     # --- sign in ---
 
@@ -301,6 +301,8 @@ def _routes(app):
              "cancelled or returned and not relisted", url_for("relists")),
             (n("SELECT COUNT(*) FROM items i WHERE i.status = 'LISTED' AND " + DAYS_LISTED + " >= 90"),
              "listed 90+ days (consider a price drop)", url_for("items", status="LISTED", min_days=90, sort="days", dir="desc")),
+            (n("SELECT COUNT(*) FROM items i WHERE i.status = 'LISTED' AND " + db.LATEST_SUGGESTION + " IS NOT NULL"),
+             "price suggestions to change on eBay", url_for("items", status="SUGGESTED")),
             (n("SELECT COUNT(*) FROM items i WHERE i.location_id IS NULL AND " + on_hand),
              "on hand with no known tote", url_for("items", tote="?", status="ON_HAND")),
             (n("SELECT COUNT(DISTINCT l.id) FROM locations l JOIN items i ON i.location_id = l.id"
@@ -449,6 +451,8 @@ def _routes(app):
             params += ["%" + f["q"] + "%"] * 2
         if f["status"] == "MISSING":
             where.append("i.missing_since IS NOT NULL")
+        elif f["status"] == "SUGGESTED":
+            where.append("i.status = 'LISTED' AND " + db.LATEST_SUGGESTION + " IS NOT NULL")
         elif f["status"] == "ON_HAND":
             where.append("i.status NOT IN (?, ?)")
             params += list(db.GONE)
@@ -515,9 +519,65 @@ def _routes(app):
             (sku,),
         ).fetchall()
         relist_of = g.conn.execute("SELECT sku FROM items WHERE relisted_as = ?", (sku,)).fetchall()
+        suggestion = g.conn.execute("SELECT " + db.LATEST_SUGGESTION + " FROM items i WHERE i.sku = ?", (sku,)).fetchone()[0]
+        draft_batch = drafts.get(g.conn, sku)[0] if row["status"] == "PENDING" else None
         return render_template("item.html", row=row, events=events, listings=item_listings, sales=item_sales,
                                statuses=db.STATUSES, parse_json=_parse_json, relist_of=relist_of,
-                               relistable=db.RELISTABLE)
+                               relistable=db.RELISTABLE, off_ebay=row["status"] in db.OFF_EBAY,
+                               suggestion=suggestion, draft_batch=draft_batch, title_max=TITLE_MAX)
+
+    @app.route("/items/<sku>/edit", methods=["POST"])
+    @login_required
+    def item_edit(sku):
+        """Correct our records: notes and cost always; title and price only when it's not live on eBay."""
+        form = request.form
+        changes = {"notes": form.get("notes", "").strip() or None, "cost_note": form.get("cost_note", "").strip() or None}
+        for key in ("cost", "price"):
+            if key in form:
+                text = form[key].strip().lstrip("$")
+                value = _float(text)
+                if text and value is None:
+                    flash("%s must be a number." % key.capitalize(), "error")
+                    return redirect(url_for("item", sku=sku))
+                changes[key] = round(value, 2) if value is not None else None  # empty cost = unknown
+        if "title" in form:
+            changes["title"] = form["title"].strip()
+            if not changes["title"] or len(changes["title"]) > TITLE_MAX:
+                flash("The title must be 1 to %d characters." % TITLE_MAX, "error")
+                return redirect(url_for("item", sku=sku))
+        try:
+            with g.conn:
+                changed = db.edit_item(g.conn, sku, changes, "web", g.user["id"])
+            flash("Saved: %s." % ", ".join(changed) if changed else "Nothing changed.", "ok")
+        except ValueError as e:
+            flash(str(e), "error")
+        return redirect(url_for("item", sku=sku))
+
+    @app.route("/items/<sku>/suggest", methods=["POST"])
+    @login_required
+    def item_suggest(sku):
+        try:
+            with g.conn:
+                db.suggest_price(g.conn, sku, _float(request.form.get("price", "").strip().lstrip("$")), "web",
+                                 g.user["id"], request.form.get("note", "").strip() or None)
+            flash("Price suggestion recorded. Change it on eBay, then press Applied.", "ok")
+        except ValueError as e:
+            flash(str(e), "error")
+        return redirect(url_for("item", sku=sku))
+
+    @app.route("/items/<sku>/applied", methods=["POST"])
+    @login_required
+    def item_applied(sku):
+        """Someone changed the price on eBay: record it and clear the suggestion."""
+        price = _float(request.form.get("price"))
+        row = g.conn.execute("SELECT price FROM items WHERE sku = ?", (sku,)).fetchone()
+        if row is None or price is None:
+            abort(400)
+        with g.conn:
+            g.conn.execute("UPDATE items SET price = ?, updated_at = ? WHERE sku = ?", (price, db.now(), sku))
+            db.log_event(g.conn, "item", sku, "price_applied", "web", g.user["id"], data={"from": row["price"], "to": price})
+        flash("Recorded the new eBay price of %s." % _money_fmt(price), "ok")
+        return redirect(request.form.get("back") if (request.form.get("back") or "").startswith("/") else url_for("item", sku=sku))
 
     @app.route("/items/bulk", methods=["POST"])
     @login_required
@@ -804,9 +864,9 @@ TOTE_SORTS = {
 ITEMS_SQL = """
     SELECT i.*, l.code AS tote,
            (SELECT listing_id FROM listings WHERE sku = i.sku ORDER BY listed_at DESC LIMIT 1) AS listing_id,
-           %s AS days_listed, %s AS last_change
+           %s AS days_listed, %s AS last_change, %s AS suggested_price
     FROM items i LEFT JOIN locations l ON l.id = i.location_id
-""" % (DAYS_LISTED, LAST_CHANGE)
+""" % (DAYS_LISTED, LAST_CHANGE, db.LATEST_SUGGESTION)
 
 
 def _qr_svg(text):
@@ -823,3 +883,23 @@ def _money_fmt(value):
 
 def _parse_json(text):
     return json.loads(text) if text else None
+
+
+def _show(value):
+    if value is None:
+        return "empty"
+    if isinstance(value, float):
+        return "%.2f" % value
+    if isinstance(value, (list, tuple)):
+        return ", ".join(str(v) for v in value)
+    return str(value)
+
+
+def event_details(data_json):
+    """An event's data as one readable line, e.g. "price: 12.99 → 14.00; notes: empty → box is dented"."""
+    data = _parse_json(data_json)
+    if not data:
+        return ""
+    if isinstance(data.get("from"), dict) and isinstance(data.get("to"), dict):
+        return "; ".join("%s: %s → %s" % (k, _show(data["from"].get(k)), _show(data["to"].get(k))) for k in data["to"])
+    return "; ".join("%s: %s" % (k, _show(v)) for k, v in data.items() if v is not None)

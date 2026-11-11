@@ -360,6 +360,48 @@ def split(conn, from_code, plan, actor, user=None):
               data={"to": sorted(set(plan.values())), "items": len(plan)})
 
 
+# Fields people can correct by hand in our records (never sent to eBay).
+EDITABLE = ("title", "price", "notes", "cost", "cost_note")
+# Statuses where the title and price are ours to change: not live on eBay, not sold.
+OFF_EBAY = ("CANCELLED", "RETURNED", "ENDED", "SKIPPED")
+
+
+def edit_item(conn, sku, changes, actor, user=None):
+    """Update item fields in our records and log old and new values. Returns the changed field names."""
+    row = conn.execute("SELECT * FROM items WHERE sku = ?", (sku,)).fetchone()
+    if row is None:
+        raise ValueError("Unknown SKU %s" % sku)
+    changed = {k: v for k, v in changes.items() if k in EDITABLE and row[k] != v}
+    if not changed:
+        return []
+    if ("title" in changed or "price" in changed) and row["status"] not in OFF_EBAY:
+        raise ValueError("%s is %s; its title and price follow eBay. Suggest a price instead." % (sku, row["status"]))
+    conn.execute("UPDATE items SET %s, updated_at = ? WHERE sku = ?" % ", ".join("%s = ?" % k for k in changed),
+                 (*changed.values(), now(), sku))
+    log_event(conn, "item", sku, "edited", actor, user,
+              data={"fields": sorted(changed), "from": {k: row[k] for k in changed}, "to": changed})
+    return sorted(changed)
+
+
+def suggest_price(conn, sku, price, actor, user=None, note=None):
+    """Record a suggested eBay price for a listed item. Nothing is sent to eBay; someone applies it there."""
+    row = conn.execute("SELECT price FROM items WHERE sku = ?", (sku,)).fetchone()
+    if row is None:
+        raise ValueError("Unknown SKU %s" % sku)
+    if price is None or price <= 0:
+        raise ValueError("A suggested price must be more than $0")
+    log_event(conn, "item", sku, "price_suggested", actor, user,
+              data={"price": round(price, 2), "was": row["price"], "note": note})
+
+
+# The newest price suggestion for an item, if it came after the item's last price change or listing.
+LATEST_SUGGESTION = """(SELECT json_extract(e.data, '$.price') FROM events e
+    WHERE e.entity = 'item' AND e.entity_id = i.sku AND e.action = 'price_suggested'
+      AND e.id > COALESCE((SELECT MAX(x.id) FROM events x WHERE x.entity = 'item' AND x.entity_id = i.sku
+                           AND x.action IN ('listed', 'price_applied')), 0)
+    ORDER BY e.id DESC LIMIT 1)"""
+
+
 def set_missing(conn, sku, missing, actor, user=None, note=None):
     """Flag an item as missing from its tote (or found again). Its tote stays as it was."""
     row = conn.execute("SELECT missing_since FROM items WHERE sku = ?", (sku,)).fetchone()

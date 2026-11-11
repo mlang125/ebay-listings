@@ -10,6 +10,8 @@
   <tr><td>Condition</td><td>{{ row.condition or '' }}</td></tr>
   <tr><td>Category</td><td>{{ row.category or '' }}</td></tr>
   {% if row.notes %}<tr><td>Notes</td><td>{{ row.notes }}</td></tr>{% endif %}
+  <tr><td>Cost</td><td>{% if row.cost is not none %}{{ money(row.cost) }}{% else %}<span class="muted">unknown</span>{% endif %}{% if row.cost_note %} <span class="muted">({{ row.cost_note }})</span>{% endif %}</td></tr>
+  {% if suggestion %}<tr><td>Suggested price</td><td><strong>{{ money(suggestion) }}</strong> <span class="muted">(not on eBay yet)</span></td></tr>{% endif %}
   {% for l in listings %}
   <tr><td>Listing</td><td><a href="https://www.ebay.com/itm/{{ l.listing_id }}" target="_blank">{{ l.listing_id }}</a> {{ l.env if l.env != 'production' else '' }} listed {{ l.listed_at[:10] }}</td></tr>
   {% endfor %}
@@ -40,16 +42,56 @@
   {% endif %}
 </form>
 
+{% if draft_batch %}
+<p class="card">This item is a draft. Edit it in the <a href="{{ url_for('draft', batch=draft_batch, sku=row.sku) }}">draft editor</a>.</p>
+{% endif %}
+
+<div class="grid">
+  <form method="post" action="{{ url_for('item_edit', sku=row.sku) }}" class="card">
+    <h2>Our records</h2>
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    {% if off_ebay %}
+    <label>Title <input name="title" value="{{ row.title or '' }}" maxlength="{{ title_max }}"></label>
+    <label>Price ($) <input name="price" value="{{ '%.2f'|format(row.price) if row.price is not none else '' }}" inputmode="decimal"></label>
+    {% else %}
+    <p class="muted small">Title and price follow the eBay listing{% if row.status == 'LISTED' %}; to change the price, suggest one{% endif %}.</p>
+    {% endif %}
+    <div class="row">
+      <label>Cost ($) <input name="cost" value="{{ '%.2f'|format(row.cost) if row.cost is not none else '' }}" inputmode="decimal" placeholder="unknown"></label>
+      <label class="grow">Cost note <input name="cost_note" value="{{ row.cost_note or '' }}" placeholder="e.g. lot of 12 for $30"></label>
+    </div>
+    <label>Notes <textarea name="notes" rows="2">{{ row.notes or '' }}</textarea></label>
+    <button>Save</button>
+  </form>
+  {% if row.status == 'LISTED' %}
+  <div class="card">
+    <h2>Price on eBay</h2>
+    <p class="muted small">Changes aren't sent to eBay from here. Record a suggestion, change the price on eBay, then press Applied.</p>
+    <form method="post" action="{{ url_for('item_suggest', sku=row.sku) }}" class="row">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>Suggest ($) <input name="price" inputmode="decimal" size="6" required></label>
+      <label class="grow">Why <input name="note" placeholder="e.g. 120 days, no watchers"></label>
+      <button>Suggest</button>
+    </form>
+    {% if suggestion %}
+    <form method="post" action="{{ url_for('item_applied', sku=row.sku) }}">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="price" value="{{ suggestion }}">
+      <button class="primary">Applied {{ money(suggestion) }} on eBay</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
 <h2>History</h2>
 <table>
   <tr><th>When</th><th>What</th><th>Who</th><th>Details</th></tr>
   {% for e in events %}
-  {% set d = parse_json(e.data) %}
   <tr>
     <td class="nowrap">{{ e.at.replace('T', ' ')[:16] }}</td>
     <td>{{ e.action }}{% if e.to_status %}: {{ e.from_status or '' }} → {{ e.to_status }}{% endif %}</td>
     <td>{{ e.user or e.actor }}</td>
-    <td class="muted small">{% if d %}{% for k, v in d.items() if v is not none %}{{ k }}: {{ v|join(', ') if v is iterable and v is not string else v }}{% if not loop.last %}; {% endif %}{% endfor %}{% endif %}</td>
+    <td class="muted small">{{ event_details(e.data) }}</td>
   </tr>
   {% endfor %}
 </table>
