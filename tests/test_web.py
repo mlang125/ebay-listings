@@ -398,6 +398,11 @@ moved_today = fresh().execute("select count(*) from events where action = 'moved
 assert moved_today, "earlier checks moved items today"
 check(c.get("/"), has=["Today", "<strong>%d</strong> moved" % moved_today, "Who did what"])
 
+# --- totes page: never-checked totes link to their count ---
+never = fresh().execute("select l.code from locations l join items i on i.location_id = l.id where l.kind = 'tote'"
+                        " and l.checked_at is null and i.status not in (?, ?) limit 1", db.GONE).fetchone()[0]
+check(c.get("/totes?unchecked=1"), has=['href="/totes/%s/count"' % never])
+
 # --- nav shows where you are ---
 for page, label in [("/items", "Items"), ("/items/MV-00005", "Items"), ("/totes", "Totes"), ("/picklist", "Pick list"), ("/checks", "Checks")]:
     current = re.findall(r'aria-current="page">([^<]+)<', c.get(page).get_data(as_text=True))

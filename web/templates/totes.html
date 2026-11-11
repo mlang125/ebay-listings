@@ -29,7 +29,7 @@
     <td><a href="{{ url_for('tote', code=r.code) }}">{{ r.code }}</a>{% if not n %} <span class="muted small">empty</span>{% endif %}</td>
     <td class="num">{{ r.on_hand or 0 }}</td>
     <td class="num">{{ r.listed or 0 }}</td><td class="num">{{ r.unlisted or 0 }}</td><td class="num">{{ r.to_ship or 0 }}</td>
-    <td class="num">{{ r.missing or '' }}</td><td class="num opt">{{ money(r.value) }}</td><td class="small opt">{{ (r.checked_at or '')[:10] }}</td>
+    <td class="num">{{ r.missing or '' }}</td><td class="num opt">{{ money(r.value) }}</td><td class="small opt">{% if r.checked_at %}{{ r.checked_at[:10] }}{% elif r.on_hand %}<a href="{{ url_for('tote_count', code=r.code) }}">Count</a>{% endif %}</td>
     <td class="muted small opt">{{ r.notes or '' }}</td>
   </tr>
   {% endfor %}
