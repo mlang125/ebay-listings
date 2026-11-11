@@ -1204,6 +1204,24 @@ def _routes(app):
             return redirect(url_for("checks"))
         return render_template("listings_check.html", d=diff)
 
+    @app.route("/listings/quantities", methods=["POST"])
+    @login_required
+    def listings_quantities():
+        """Take eBay's units-left for the ticked listed items (from the listing check). Our records only."""
+        changed = 0
+        try:
+            with g.conn:
+                for sku in request.form.getlist("sku"):
+                    quantity = int(request.form.get("qty_" + sku, ""))
+                    status = g.conn.execute("SELECT status FROM items WHERE sku = ?", (sku,)).fetchone()
+                    if status is None or status["status"] != "LISTED":
+                        raise ValueError("%s isn't listed; nothing was changed." % sku)
+                    changed += db.set_quantity(g.conn, sku, quantity, "web", g.user["id"], note="eBay's count (listing check)")
+            flash("Updated units left on %d item%s." % (changed, "" if changed == 1 else "s"), "ok")
+        except ValueError as e:
+            flash(str(e) if "nothing was changed" in str(e) else "Bad quantity; nothing was changed.", "error")
+        return redirect(url_for("checks"))
+
     @app.route("/sync", methods=["POST"])
     @login_required
     def sync():

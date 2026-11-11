@@ -520,6 +520,16 @@ for h in ["Listed here, not live on eBay", gone_sku, "Mark ticked items Ended", 
           "Live on eBay, not in our records", "Seller Hub thing", "Nothing has changed yet"]:
     assert h in page, h
 assert fresh().execute("select status from items where sku=?", (gone_sku,)).fetchone()[0] == "LISTED", "the check alone changes nothing"
+assert 'name="qty_%s"' % qty_sku in page and "Use eBay's numbers" in page
+was_qty = fresh().execute("select quantity from items where sku=?", (qty_sku,)).fetchone()[0]
+check(c.post("/listings/quantities", data=MultiDict([("csrf", tok), ("sku", qty_sku), ("qty_" + qty_sku, str(was_qty + 5))]),
+             follow_redirects=True), has=["Updated units left on 1 item."])
+assert fresh().execute("select quantity from items where sku=?", (qty_sku,)).fetchone()[0] == was_qty + 5
+check(c.get("/items/" + qty_sku), has=["quantity: %d → %d" % (was_qty, was_qty + 5)])
+check(c.post("/listings/quantities", data=MultiDict([("csrf", tok), ("sku", qty_sku), ("qty_" + qty_sku, "-1")]),
+             follow_redirects=True), has=["Bad quantity; nothing was changed."])
+check(c.post("/listings/quantities", data=MultiDict([("csrf", tok), ("sku", "MV-01385"), ("qty_MV-01385", "2")]),
+             follow_redirects=True), has=["MV-01385 isn&#39;t listed; nothing was changed."])
 check(c.post("/items/bulk", data=MultiDict([("csrf", tok), ("back", "/checks"), ("action", "status"), ("status", "ENDED"),
                                             ("note", "not live on eBay (listing check)"), ("sku", gone_sku)]), follow_redirects=True))
 assert fresh().execute("select status from items where sku=?", (gone_sku,)).fetchone()[0] == "ENDED"

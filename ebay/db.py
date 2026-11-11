@@ -386,6 +386,21 @@ def edit_item(conn, sku, changes, actor, user=None):
     return sorted(changed)
 
 
+def set_quantity(conn, sku, quantity, actor, user=None, note=None):
+    """Correct how many units are still listed (eBay's count is the real one). Logged like an edit."""
+    row = conn.execute("SELECT quantity FROM items WHERE sku = ?", (sku,)).fetchone()
+    if row is None:
+        raise ValueError("Unknown SKU %s" % sku)
+    if quantity < 0:
+        raise ValueError("Quantity can't be below 0")
+    if row["quantity"] == quantity:
+        return False
+    conn.execute("UPDATE items SET quantity = ?, updated_at = ? WHERE sku = ?", (quantity, now(), sku))
+    log_event(conn, "item", sku, "edited", actor, user,
+              data={"fields": ["quantity"], "from": {"quantity": row["quantity"]}, "to": {"quantity": quantity}, "note": note})
+    return True
+
+
 def suggest_price(conn, sku, price, actor, user=None, note=None):
     """Record a suggested eBay price for a listed item. Nothing is sent to eBay; someone applies it there."""
     row = conn.execute("SELECT price FROM items WHERE sku = ?", (sku,)).fetchone()

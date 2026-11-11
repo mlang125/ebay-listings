@@ -37,14 +37,20 @@
 
 {% if d.quantity %}
 <h2>Quantity left differs <span class="muted">{{ d.quantity|length }}</span></h2>
-<p class="muted small">Listings with more than one unit. eBay's number is the real one; the next order fetch catches up on sales.</p>
-<table class="itemrows">
-  <tr><th>SKU</th><th class="num">Here</th><th class="num">eBay</th><th>Title</th></tr>
-  {% for r, ebay_qty in d.quantity %}
-  <tr><td class="nowrap"><a href="{{ url_for('item', sku=r.sku) }}">{{ r.sku }}</a></td><td class="num">{{ r.quantity }}</td>
-    <td class="num">{{ ebay_qty }}</td><td class="title">{{ r.title }}</td></tr>
-  {% endfor %}
-</table>
+<p class="muted small">eBay's number is the real one. Fetch orders first if you've had sales today, then take eBay's numbers.</p>
+<form method="post" action="{{ url_for('listings_quantities') }}">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <table class="itemrows">
+    <tr><th class="tick"></th><th>SKU</th><th class="num">Here</th><th class="num">eBay</th><th>Title</th></tr>
+    {% for r, ebay_qty in d.quantity %}
+    <tr><td class="tick"><input type="checkbox" name="sku" value="{{ r.sku }}" checked aria-label="Tick {{ r.sku }}">
+        <input type="hidden" name="qty_{{ r.sku }}" value="{{ ebay_qty }}"></td>
+      <td class="nowrap"><a href="{{ url_for('item', sku=r.sku) }}">{{ r.sku }}</a></td><td class="num">{{ r.quantity }}</td>
+      <td class="num">{{ ebay_qty }}</td><td class="title">{{ r.title }}</td></tr>
+    {% endfor %}
+  </table>
+  <p><button>Use eBay's numbers for ticked items</button></p>
+</form>
 {% endif %}
 
 {% if d.unknown %}
