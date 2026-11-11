@@ -393,6 +393,11 @@ worth = fresh().execute("select sum(price * max(quantity, 1)) from items where s
 check(c.get("/items?status=LISTED"), has=["Not yet shipped: $%s at current prices" % "{:,.2f}".format(worth)])
 assert "Not yet shipped" not in c.get("/items?status=SENT_TO_POST_OFFICE").get_data(as_text=True)
 
+# --- home page: today's work ---
+moved_today = fresh().execute("select count(*) from events where action = 'moved' and at >= date('now', 'localtime')").fetchone()[0]
+assert moved_today, "earlier checks moved items today"
+check(c.get("/"), has=["Today", "<strong>%d</strong> moved" % moved_today, "Who did what"])
+
 # --- nav shows where you are ---
 for page, label in [("/items", "Items"), ("/items/MV-00005", "Items"), ("/totes", "Totes"), ("/picklist", "Pick list"), ("/checks", "Checks")]:
     current = re.findall(r'aria-current="page">([^<]+)<', c.get(page).get_data(as_text=True))

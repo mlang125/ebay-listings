@@ -41,6 +41,13 @@
     {% endfor %}
   </section>
   <section class="card">
+    <h2>Today</h2>
+    {% if today_counts %}
+      <p>{% for n, what in today_counts %}<strong>{{ n }}</strong> {{ what }}{{ ', ' if not loop.last }}{% endfor %}.</p>
+    {% else %}
+      <p class="muted">Nothing yet today.</p>
+    {% endif %}
+    <p><a href="{{ url_for('activity') }}">Who did what</a></p>
     <h2>Items</h2>
     <table class="compact">
       {% for status, n in counts %}

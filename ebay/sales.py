@@ -101,6 +101,25 @@ def active(conn, today=None):
     }
 
 
+# What the home page's Today card counts: (label, SQL condition on events e).
+TODAY = [
+    ("listed", "e.action = 'listed'"),
+    ("moved", "e.action = 'moved'"),
+    ("labels printed", "e.action = 'status' AND e.to_status = 'LABEL_PRINTED'"),
+    ("packed", "e.action = 'status' AND e.to_status = 'PACKAGED'"),
+    ("sold", "e.action = 'status' AND e.to_status = 'BOUGHT'"),
+    ("shipped", "e.action = 'status' AND e.to_status = 'SENT_TO_POST_OFFICE'"),
+]
+
+
+def today_counts(conn, today=None):
+    """How much happened since midnight, for the whole team. Zero counts are left out."""
+    since = (today or datetime.date.today()).isoformat()
+    row = conn.execute("SELECT " + ", ".join("COUNT(CASE WHEN %s THEN 1 END)" % cond for _, cond in TODAY)
+                       + " FROM events e WHERE e.at >= ?", (since,)).fetchone()
+    return [(n, label) for n, (label, _) in zip(row, TODAY) if n]
+
+
 def by_user(conn, days=30, today=None):
     """What each person did in the last `days` days, from the event log."""
     today = today or datetime.date.today()

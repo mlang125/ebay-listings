@@ -316,6 +316,7 @@ def _routes(app):
             due_today=[r for r in to_ship if r["ship_by"] == today],
             batches=[b for b in batches if b["open"]],
             attention=_attention(g.conn),
+            today_counts=sales.today_counts(g.conn),
         )
 
     def _attention(conn):
