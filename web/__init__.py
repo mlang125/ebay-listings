@@ -260,7 +260,7 @@ def _routes(app):
     SECTIONS = {"drafts_index": "drafts", "upload": "drafts", "batch": "drafts", "draft": "drafts",
                 "items": "items", "item": "items", "item_edit": "items",
                 "totes": "totes", "tote": "totes", "tote_count": "totes", "consolidate": "totes", "labels": "totes",
-                "quick_move": "move", "picklist": "picklist", "relists": "relists", "checks": "checks",
+                "quick_move": "move", "picklist": "picklist", "pack": "picklist", "relists": "relists", "checks": "checks",
                 "sales_page": "sales", "activity": "activity", "users": "users", "home": "home"}
 
     @app.context_processor
@@ -581,8 +581,12 @@ def _routes(app):
     # --- items and totes ---
 
     def _sku(text):
-        """A SKU from what someone typed: 'MV-00920', 'mv920' or just '920'."""
-        text = (text or "").strip().upper()
+        """A SKU from what someone typed or scanned: 'MV-00920', 'mv920', just '920', or a sticker's
+        QR code (the item's address, ending in /items/MV-00920)."""
+        text = (text or "").strip()
+        if "/items/" in text:
+            text = text.rsplit("/items/", 1)[1].split("?")[0].strip("/")
+        text = text.upper()
         if re.fullmatch(r"\d{1,5}", text):
             return "MV-%05d" % int(text)
         if re.fullmatch(r"MV-?\d{1,5}", text):
@@ -618,6 +622,32 @@ def _routes(app):
         ).fetchall() if tote else []
         return render_template("move.html", tote=tote, recent=recent,
                                codes=sorted(db.totes_in_use(g.conn) | set(db.PLACES)), suggestion=db.suggest_tote(g.conn))
+
+    PACK_STEPS = {"LABEL_PRINTED": "Label printed", "PACKAGED": "Packed", "SENT_TO_POST_OFFICE": "Dropped off"}
+
+    @app.route("/pack", methods=["GET", "POST"])
+    @login_required
+    def pack():
+        """The packing table: pick a step, then enter or scan SKU after SKU. Only items waiting to ship change."""
+        step = request.values.get("step", "PACKAGED")
+        if step not in PACK_STEPS:
+            abort(400)
+        if request.method == "POST":
+            sku = _sku(request.form.get("sku"))
+            waiting = {r["sku"]: r for r in orders.pick_list(g.conn)}
+            if sku not in waiting:
+                known = g.conn.execute("SELECT status FROM items WHERE sku = ?", (sku,)).fetchone()
+                flash("%s isn't waiting to ship%s." % (sku or "(empty)", " (it's %s)" % known["status"].replace("_", " ").lower()
+                                                        if known else ": no such item"), "error")
+            elif waiting[sku]["status"] == step:
+                flash("%s is already %s." % (sku, PACK_STEPS[step].lower()), "ok")
+            else:
+                with g.conn:
+                    db.set_status(g.conn, sku, step, "web", g.user["id"])
+                flash("%s %s: %s" % (sku, PACK_STEPS[step].lower(), waiting[sku]["title"]), "ok")
+            return redirect(url_for("pack", step=step))
+        left = [r for r in orders.pick_list(g.conn) if r["status"] != step]
+        return render_template("pack.html", step=step, steps=PACK_STEPS, left=left)
 
     @app.route("/find")
     @login_required

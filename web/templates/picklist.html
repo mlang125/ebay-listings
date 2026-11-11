@@ -16,6 +16,7 @@
     <input type="hidden" name="back" value="{{ request.full_path }}">
     <button>Get new orders from eBay</button>
   </form>
+  <a href="{{ url_for('pack') }}">Pack by SKU</a>
   <button onclick="window.print()" class="primary">Print</button>
 </div>
 <p class="muted noprint">Orders last checked {{ (last_sync or 'never').replace('T', ' ')[:16] }}. Statuses here are only for us; buyers see "shipped" once the label's tracking is on eBay.</p>

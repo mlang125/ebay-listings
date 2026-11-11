@@ -420,6 +420,18 @@ assert c.get("/stickers?sku=MV-00005").get_data(as_text=True).count('class="stic
 check(c.get("/items"), has=['formaction="/stickers"'])
 check(c.get("/items/MV-00005"), has=["Print a SKU sticker"])
 
+# --- packing station ---
+pack_sku = orders.pick_list(fresh())[0]["sku"]
+check(c.get("/pack"), has=["Pack", "Not packed yet", pack_sku])
+check(c.post("/pack", data={"csrf": tok, "step": "PACKAGED", "sku": "http://mac.local:5050/items/" + pack_sku}, follow_redirects=True),
+      has=[pack_sku + " packed"])
+assert fresh().execute("select status from items where sku=?", (pack_sku,)).fetchone()[0] == "PACKAGED"
+check(c.post("/pack", data={"csrf": tok, "step": "PACKAGED", "sku": pack_sku}, follow_redirects=True), has=["already packed"])
+check(c.post("/pack", data={"csrf": tok, "step": "PACKAGED", "sku": "MV-00005"}, follow_redirects=True), has=["MV-00005 isn&#39;t waiting to ship (it&#39;s pending)"])
+check(c.post("/pack", data={"csrf": tok, "step": "PACKAGED", "sku": "99999"}, follow_redirects=True), has=["no such item"])
+assert c.post("/pack", data={"csrf": tok, "step": "DELIVERED", "sku": pack_sku}).status_code == 400
+check(c.get("/picklist"), has=["Pack by SKU"])
+
 # --- nav shows where you are ---
 for page, label in [("/items", "Items"), ("/items/MV-00005", "Items"), ("/totes", "Totes"), ("/picklist", "Pick list"), ("/checks", "Checks")]:
     current = re.findall(r'aria-current="page">([^<]+)<', c.get(page).get_data(as_text=True))

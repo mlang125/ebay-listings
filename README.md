@@ -74,6 +74,8 @@ Pages (every table sorts by clicking a column header; the sort stays in the URL)
 - **Pick list:** sold, unshipped items grouped by tote, with a *Print* layout. *Get new orders from eBay*
   runs the order sync. *Label printed* and *Packed* mark progress for us; eBay only shows "shipped" to the buyer.
   Tick several items to mark them label printed, packed or dropped off together.
+  *Pack by SKU* opens the packing station: pick a step, then type or scan SKU after SKU (a sticker's QR code
+  works too, as it does on Quick move).
 
 - **Relists:** cancelled and returned items, with suggested links to the SKU each was relisted under
   (same title on a newer listing). Tick and save, or link one by hand from the item's page.

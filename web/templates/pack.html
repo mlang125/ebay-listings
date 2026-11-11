@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Pack{% endblock %}
+{% block body %}
+<h1>Pack</h1>
+<p class="muted">Pick what you're doing, then enter or scan each item's SKU. Only sold items waiting to ship change.</p>
+<form method="post" class="card quick-move">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="row">
+    <label>Mark as <select name="step" onchange="location = '?step=' + this.value">
+      {% for s, label in steps.items() %}<option value="{{ s }}" {% if s == step %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+    <label class="grow">SKU <input name="sku" autocomplete="off" placeholder="920, MV-00920 or scan a sticker" required autofocus></label>
+    <button class="primary">Mark</button>
+  </div>
+</form>
+<h2>Not {{ steps[step]|lower }} yet <span class="muted">{{ left|length }}</span></h2>
+{% if left %}
+<table class="itemrows">
+  {% for r in left %}
+  <tr><td class="nowrap"><a href="{{ url_for('item', sku=r.sku) }}">{{ r.sku }}</a>{% if r.missing_since %} <span class="tag needs-work">missing</span>{% endif %}</td>
+    <td class="nowrap">{{ r.tote or '?' }}</td><td><span class="tag">{{ r.status|replace('_', ' ')|lower }}</span></td>
+    <td class="title">{{ r.title }}</td><td class="nowrap small">ship by {{ r.ship_by or '?' }}</td></tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">Everything waiting to ship is {{ steps[step]|lower }}.</p>
+{% endif %}
+{% endblock %}
