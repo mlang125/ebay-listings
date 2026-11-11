@@ -531,6 +531,10 @@ def broken():
 trading.active_listings = broken
 check(c.post("/listings/check", data={"csrf": tok}, follow_redirects=True), has=["Couldn&#39;t get listings from eBay"])
 
+# --- item page: units still listed ---
+listed_one = fresh().execute("select sku from items where status = 'LISTED' and quantity = 1 limit 1").fetchone()[0]
+check(c.get("/items/" + listed_one), has=["Still listed</td><td>1 unit\n"])
+
 # --- nav shows where you are ---
 for page, label in [("/items", "Items"), ("/items/MV-00005", "Items"), ("/totes", "Totes"), ("/picklist", "Pick list"), ("/checks", "Checks")]:
     current = re.findall(r'aria-current="page">([^<]+)<', c.get(page).get_data(as_text=True))

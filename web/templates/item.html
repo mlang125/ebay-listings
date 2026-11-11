@@ -19,6 +19,8 @@
 <table class="compact">
   <tr><td>Tote</td><td>{% if row.tote %}<a href="{{ url_for('tote', code=row.tote) }}">{{ row.tote }}</a>{% else %}unknown{% endif %}</td></tr>
   <tr><td>Price</td><td>{{ money(row.price) }}</td></tr>
+  {% if row.status == 'LISTED' %}<tr><td>Still listed</td><td>{{ row.quantity }} unit{{ '' if row.quantity == 1 else 's' }}
+    <span class="muted small">(each sale takes one off; at 0 it's bought)</span></td></tr>{% endif %}
   <tr><td>Condition</td><td>{{ row.condition or '' }}</td></tr>
   <tr><td>Category</td><td>{{ row.category or '' }}</td></tr>
   {% if row.notes %}<tr><td>Notes</td><td>{{ row.notes }}</td></tr>{% endif %}
