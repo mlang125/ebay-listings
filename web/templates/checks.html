@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Checks{% endblock %}
+{% block body %}
+<h1>Checks</h1>
+<p class="muted">Records that look wrong. Open an item to fix it; nothing changes from this page.</p>
+{% for what, why, rows in found %}
+<section>
+  <h2>{{ what }} <span class="muted">{{ rows|length }}{{ '+' if rows|length == 100 else '' }}</span></h2>
+  <p class="muted small">{{ why }}</p>
+  <table class="itemrows">
+    {% for r in rows %}
+    <tr><td class="nowrap"><a href="{{ url_for('item', sku=r[0]) }}">{{ r[0] }}</a></td><td class="title">{{ r[1] or '(no title)' }}</td>
+        <td class="muted small">{{ r[2] if r[2] is not none else '' }}</td></tr>
+    {% endfor %}
+  </table>
+</section>
+{% else %}
+<p>Everything looks right.</p>
+{% endfor %}
+{% if clean %}
+<p class="muted small">No problems: {{ clean|join(' · ') }}.</p>
+{% endif %}
+{% endblock %}

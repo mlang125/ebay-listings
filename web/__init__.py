@@ -332,7 +332,48 @@ def _routes(app):
                " WHERE l.kind = 'tote' AND l.checked_at IS NULL AND " + on_hand),
              "totes never checked", url_for("totes", unchecked=1)),
         ]
+        problems = sum(len(rows) for _, _, rows in _data_checks(conn, limit=1))
+        if problems:
+            found.append((problems, "kind%s of record problem (see Checks)" % ("" if problems == 1 else "s"), url_for("checks")))
         return [f for f in found if f[0]]
+
+    # Record problems worth fixing by hand: (what, why it matters, SQL giving sku, title, detail).
+    DATA_CHECKS = [
+        ("Listed with no price", "The sales numbers and price drops need it.",
+         "SELECT sku, title, NULL FROM items WHERE status = 'LISTED' AND (price IS NULL OR price <= 0)"),
+        ("No title", "Nobody can find it by searching.",
+         "SELECT sku, title, status FROM items WHERE status NOT IN ('SENT_TO_POST_OFFICE', 'DELIVERED')"
+         " AND (title IS NULL OR TRIM(title) = '')"),
+        ("Title over 80 characters", "eBay cuts titles at 80.",
+         "SELECT sku, title, LENGTH(title) || ' characters' FROM items WHERE status IN ('PENDING', 'LISTED') AND LENGTH(title) > 80"),
+        ("Listed with no eBay listing ID", "It can't be matched to orders, so a sale won't update it.",
+         "SELECT i.sku, i.title, NULL FROM items i WHERE i.status = 'LISTED'"
+         " AND NOT EXISTS (SELECT 1 FROM listings l WHERE l.sku = i.sku)"),
+        ("Same title listed more than once", "Fine for two of the same thing; otherwise it may be listed twice.",
+         "SELECT i.sku, i.title, l.code FROM items i LEFT JOIN locations l ON l.id = i.location_id WHERE i.status = 'LISTED'"
+         " AND LOWER(TRIM(i.title)) IN (SELECT LOWER(TRIM(title)) FROM items WHERE status = 'LISTED'"
+         " GROUP BY LOWER(TRIM(title)) HAVING COUNT(*) > 1) ORDER BY LOWER(TRIM(i.title)), i.sku"),
+        ("Sold with no order", "Sales numbers miss it. Usually an order sync fixes it.",
+         "SELECT i.sku, i.title, i.status FROM items i"
+         " WHERE i.status IN ('BOUGHT', 'LABEL_PRINTED', 'PACKAGED', 'SENT_TO_POST_OFFICE', 'DELIVERED')"
+         " AND NOT EXISTS (SELECT 1 FROM order_lines o WHERE o.sku = i.sku)"),
+        ("Cost at or above the price", "It loses money if it sells at this price.",
+         "SELECT sku, title, printf('cost $%.2f, price $%.2f', cost, price) FROM items"
+         " WHERE status IN ('PENDING', 'LISTED') AND cost IS NOT NULL AND price IS NOT NULL AND cost >= price"),
+        ("Shipped but still marked missing", "Missing only matters for items on hand.",
+         "SELECT sku, title, status FROM items WHERE status IN ('SENT_TO_POST_OFFICE', 'DELIVERED') AND missing_since IS NOT NULL"),
+    ]
+
+    def _data_checks(conn, limit=100):
+        return [(what, why, conn.execute(sql + ("" if "ORDER BY" in sql else " ORDER BY 1") + " LIMIT ?", (limit,)).fetchall())
+                for what, why, sql in DATA_CHECKS]
+
+    @app.route("/checks")
+    @login_required
+    def checks():
+        """Records that look wrong. Nothing here changes anything; each row links to the item to fix."""
+        found = _data_checks(g.conn)
+        return render_template("checks.html", found=[f for f in found if f[2]], clean=[f[0] for f in found if not f[2]])
 
     # --- drafts ---
 

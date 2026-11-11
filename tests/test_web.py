@@ -353,6 +353,18 @@ check(c.post("/drafts/upload", data={"csrf": tok, "tote": "bad tote", "photos": 
       has=["isn&#39;t a tote code"])
 assert len([d for d in os.listdir(os.path.join(S, "inbox")) if d.startswith("t5-")]) == 1
 
+# --- data checks ---
+conn = fresh()
+saved = [tuple(r) for r in conn.execute("SELECT sku, title, status, price FROM items WHERE sku IN ('MV-00005', 'MV-01385')")]
+with conn:
+    conn.execute("UPDATE items SET title = ? WHERE sku = 'MV-00005'", ("x" * 85,))
+    conn.execute("UPDATE items SET status = 'LISTED', price = NULL WHERE sku = 'MV-01385'")
+check(c.get("/checks"), has=["Title over 80 characters", "85 characters", "MV-00005", "Listed with no price", "MV-01385", "No problems:"])
+check(c.get("/"), has=["record problem", "/checks"])
+with conn:
+    conn.executemany("UPDATE items SET title = ?, status = ?, price = ? WHERE sku = ?", [(t, st, p, sku) for sku, t, st, p in saved])
+assert "85 characters" not in c.get("/checks").get_data(as_text=True)
+
 # --- people and roles ---
 check(c.get("/users"), has=["People", "Add someone", "sam", "lister"])
 check(sam.get("/users"), has=["People"])
