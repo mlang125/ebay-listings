@@ -468,6 +468,25 @@ assert r.status_code == 500 and "Something went wrong" in r.get_data(as_text=Tru
 
 # --- home page: order sync button ---
 check(c.get("/"), has=["Get new orders from eBay", 'name="back" value="/"', "Last checked"])
+# A new sale of a listed item: quantity goes down, and at 0 the item is bought and on the pick list.
+single, multi = [r[0] for r in fresh().execute(
+    "select i.sku from items i join listings l on l.sku = i.sku where i.status = 'LISTED' and i.quantity = 1"
+    " and not exists (select 1 from order_lines ol where ol.sku = i.sku) order by i.sku limit 2")]
+listing_of = lambda sku: fresh().execute("select listing_id from listings where sku = ?", (sku,)).fetchone()[0]
+with fresh() as conn:
+    conn.execute("UPDATE items SET quantity = 3 WHERE sku = ?", (multi,))
+def fake_order(n, sku, qty=1):
+    return {"orderId": "TEST-%d" % n, "creationDate": "2026-11-11T08:00:00.000Z", "orderFulfillmentStatus": "NOT_STARTED",
+            "pricingSummary": {"deliveryCost": {"value": "5.00"}, "total": {"value": "25.00"}},
+            "lineItems": [{"lineItemId": "TESTLINE-%d" % n, "legacyItemId": listing_of(sku), "title": "t", "quantity": qty,
+                           "lineItemCost": {"value": "20.00"}, "lineItemFulfillmentInstructions": {"shipByDate": "2026-11-14T07:59:59.000Z"}}]}
+orders._fetch_orders = lambda days: iter([fake_order(1, single), fake_order(2, multi)])
+check(c.post("/sync", data={"csrf": tok, "back": "/"}, follow_redirects=True), has=["2 orders checked, 2 new sales.", single + ": LISTED → BOUGHT"])
+assert tuple(fresh().execute("select status, quantity from items where sku=?", (single,)).fetchone()) == ("BOUGHT", 0)
+assert tuple(fresh().execute("select status, quantity from items where sku=?", (multi,)).fetchone()) == ("LISTED", 2)
+check(c.get("/picklist"), has=[single])
+check(c.post("/sync", data={"csrf": tok, "back": "/"}, follow_redirects=True), has=["2 orders checked, 0 new sales."])
+assert fresh().execute("select quantity from items where sku=?", (multi,)).fetchone()[0] == 2, "a repeat sync doesn't count a sale twice"
 orders._fetch_orders = lambda days: iter(())  # eBay faked: no orders, no network call
 check(c.post("/sync", data={"csrf": tok, "back": "/"}, follow_redirects=True), has=["0 orders checked, 0 new sales."])
 synced = fresh().execute("select at, user_id, data from events where action = 'synced' order by id desc").fetchone()

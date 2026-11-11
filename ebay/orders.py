@@ -91,6 +91,10 @@ def sync(conn, days=90, user=None):
                      _money(line["lineItemCost"]), line["quantity"]),
                 ).rowcount
                 counts["new_lines"] += new
+                if new and not cancelled:
+                    # A new sale takes its units off what's still listed; at 0 the item counts as sold below.
+                    conn.execute("UPDATE items SET quantity = MAX(quantity - ?, 0), updated_at = ? WHERE sku = ?",
+                                 (line["quantity"], db.now(), sku))
                 remaining = conn.execute("SELECT quantity, status FROM items WHERE sku = ?", (sku,)).fetchone()
                 if remaining["quantity"] > 0 or remaining["status"] == "RETURNED":
                     continue  # more units still listed, or settled by hand
