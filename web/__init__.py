@@ -343,7 +343,12 @@ def _routes(app):
             batches=[b for b in batches if b["open"]],
             attention=_attention(g.conn),
             today_counts=sales.today_counts(g.conn),
+            last_sync=_last_sync(),
         )
+
+    def _last_sync():
+        """When orders were last fetched from eBay (any order sync writes events as actor 'sync')."""
+        return g.conn.execute("SELECT MAX(at) FROM events WHERE actor = 'sync'").fetchone()[0]
 
     def _attention(conn):
         """Things someone should look at, each with a count and a link to the list. Zero counts are left out."""
@@ -1148,9 +1153,7 @@ def _routes(app):
             if not groups or groups[-1][0] != r["tote"]:
                 groups.append((r["tote"], []))
             groups[-1][1].append(r)
-        last_sync = g.conn.execute(
-            "SELECT MAX(at) FROM events WHERE actor = 'sync'"
-        ).fetchone()[0]
+        last_sync = _last_sync()
         return render_template("picklist.html", groups=groups, count=len(rows), days=days,
                                today=datetime.date.today().isoformat(), printed=db.now()[:16].replace("T", " "),
                                last_sync=last_sync)

@@ -466,6 +466,9 @@ def boom():
 r = boom_app.test_client().get("/boom")
 assert r.status_code == 500 and "Something went wrong" in r.get_data(as_text=True), r.get_data(as_text=True)[:300]
 
+# --- home page: order sync button ---
+check(c.get("/"), has=["Get new orders from eBay", 'name="back" value="/"', "Last checked"])
+
 # --- nav shows where you are ---
 for page, label in [("/items", "Items"), ("/items/MV-00005", "Items"), ("/totes", "Totes"), ("/picklist", "Pick list"), ("/checks", "Checks")]:
     current = re.findall(r'aria-current="page">([^<]+)<', c.get(page).get_data(as_text=True))
