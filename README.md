@@ -43,6 +43,9 @@ Pages (every table sorts by clicking a column header; the sort stays in the URL)
   cancellations not relisted, listings up 90+ days, price suggestions to apply, on-hand items with no
   known tote, totes never checked. Overdue and due-today shipments show at the top.
 - **Find** (top bar): a SKU or just its number (`920`), a tote code, or words from a title.
+- **Upload photos** (Drafts page): pick the tote and upload its photos (or a zip) from a phone or laptop.
+  They're saved in upload order to `inbox/<tote>-<date>/` and listed as *waiting to be drafted*, with who took them.
+- **Quick move** (top bar): pick a tote, then type SKU after SKU to bin items; the tote stays filled in.
 - **Drafts:** each batch's drafts with their photos and state (*needs work*, *ready*, *published*,
   *skipped*). The editor covers title, price, condition, description, item specifics, package size,
   comp search words and open questions. A draft can't be published while it still has open questions
@@ -58,6 +61,7 @@ Pages (every table sorts by clicking a column header; the sort stays in the URL)
     on eBay, then press *Applied*. Nothing on this page is sent to eBay.
 - **Totes:** each tote's on-hand count, listed value and last check, plus the next free tote ID.
   The tote page has the same tick-and-act bar as the items list.
+  - *Recent changes:* each tote page lists what moved in and out, combines, splits and checks, and who did them.
   - *Labels:* `/labels` prints one 4x6 label per tote: the code in big letters and a QR code that opens
     the tote's page. Set `LABEL_URL` in `.env` (e.g. `http://your-mac.local:5050`) so printed codes keep
     working if the Mac's IP address changes.

@@ -1,7 +1,21 @@
 {% extends "base.html" %}
 {% block title %}Drafts{% endblock %}
 {% block body %}
-<h1>Drafts</h1>
+<div class="head">
+  <h1>Drafts</h1>
+  <a href="{{ url_for('upload') }}">Upload a tote's photos</a>
+</div>
+{% if waiting %}
+<div class="card">
+  <h2>Waiting to be drafted</h2>
+  <table class="compact">
+    {% for w in waiting %}
+    <tr><td>{{ w.name }}</td><td>tote {{ w.tote }}</td><td>{{ w.files }} files</td><td class="muted">{{ w.who or '' }} {{ w.created_at[:16].replace('T', ' ') }}</td></tr>
+    {% endfor %}
+  </table>
+  <p class="muted small">Ask Claude to draft a batch; the photos are in inbox/&lt;batch&gt;/.</p>
+</div>
+{% endif %}
 <table>
   <tr><th>Batch</th><th>Tote</th><th class="num">Ready</th><th class="num">Needs work</th><th class="num">Published</th><th class="num">Total</th></tr>
   {% for b in batches %}

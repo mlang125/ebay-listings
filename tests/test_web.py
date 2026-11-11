@@ -32,7 +32,7 @@ def fake_publish(conn, batch, skus, user=None, actor="cli", log=print):
     calls.append((skus, user, actor)); log("%s: published as listing 999 (fake)" % sorted(skus))
 listings.publish = fake_publish
 comps.refresh_active = lambda conn, batch, skus, log=print, user=None, actor="cli": calls.append(("comps", skus, user))
-app = create_app(db_path=S + "/ebay.db", batches_dir=S + "/batches")
+app = create_app(db_path=S + "/ebay.db", batches_dir=S + "/batches", inbox_dir=S + "/inbox")
 
 def csrf(html): return re.search(r'name="csrf" value="([^"]+)"', html).group(1)
 def check(resp, code=200, has=()):
@@ -335,6 +335,23 @@ check(c.post("/move", data={"csrf": tok, "tote": "Q3", "sku": un_item.lower()}, 
 check(c.post("/move", data={"csrf": tok, "tote": "Q3", "sku": "99999"}, follow_redirects=True), has=["No item MV-99999"])
 check(c.post("/move", data={"csrf": tok, "tote": "nope", "sku": num}, follow_redirects=True), has=["isn&#39;t a tote code"])
 assert c.get("/find?q=mv920").location.endswith("/items/MV-00920")
+
+# --- photo upload ---
+from io import BytesIO  # noqa: E402
+check(c.get("/drafts/upload"), has=["Upload a tote", 'type="file"'])
+photo = open(os.path.join(S, "batches", "batch1", "photos", "MV-00005-1.jpg"), "rb").read()
+r = c.post("/drafts/upload", data={"csrf": tok, "tote": "t5", "photos": [(BytesIO(photo), "IMG_1.JPG"), (BytesIO(photo), "../../evil name.jpg")]},
+           content_type="multipart/form-data", follow_redirects=True)
+check(r, has=["Uploaded 2 files as batch t5-", "Waiting to be drafted"])
+up = [d for d in os.listdir(os.path.join(S, "inbox")) if d.startswith("t5-")]
+assert len(up) == 1 and sorted(os.listdir(os.path.join(S, "inbox", up[0]))) == ["001-IMG_1.JPG", "002-evil_name.jpg"]
+b = fresh().execute("select b.source, u.name from batches b join users u on u.id = b.photographer_id where b.name = ?", (up[0],)).fetchone()
+assert tuple(b) == ("upload", "matt")
+check(c.post("/drafts/upload", data={"csrf": tok, "tote": "T5", "photos": [(BytesIO(b"x"), "notes.txt")]}, content_type="multipart/form-data", follow_redirects=True),
+      has=["not notes.txt"])
+check(c.post("/drafts/upload", data={"csrf": tok, "tote": "bad tote", "photos": [(BytesIO(photo), "a.jpg")]}, content_type="multipart/form-data", follow_redirects=True),
+      has=["isn&#39;t a tote code"])
+assert len([d for d in os.listdir(os.path.join(S, "inbox")) if d.startswith("t5-")]) == 1
 
 # --- shipping, numbers, activity ---
 check(c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "PACKAGED", "days": ""}, follow_redirects=True), has=["packaged"])

@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Upload photos{% endblock %}
+{% block body %}
+<h1>Upload a tote's photos</h1>
+<p class="muted">Take a divider photo of the whiteboard before each item (notes like "tested" or "no lid" go on it),
+  then upload the whole tote here in order. Claude turns the batch into drafts for review.</p>
+<datalist id="codes">{% for c in codes %}<option value="{{ c }}">{% endfor %}<option value="{{ suggestion }}">next free</option></datalist>
+<form method="post" enctype="multipart/form-data" class="card" onsubmit="this.querySelector('button').disabled = true; this.querySelector('button').textContent = 'Uploading…'">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label>Tote <input name="tote" list="codes" required autocapitalize="characters" placeholder="e.g. {{ suggestion }}"></label>
+  <label>Photos or a zip <input type="file" name="photos" multiple required accept="image/*,.heic,.zip"></label>
+  <button class="primary">Upload</button>
+</form>
+{% endblock %}

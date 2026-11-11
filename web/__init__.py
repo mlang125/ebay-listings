@@ -16,6 +16,7 @@ import secrets
 import segno
 from flask import Flask, abort, flash, g, redirect, render_template, request, send_from_directory, session, url_for
 from markupsafe import Markup
+from werkzeug.utils import secure_filename
 from werkzeug.security import check_password_hash
 
 from ebay import api, comps, config, db, drafts, listings, orders, sales
@@ -39,16 +40,19 @@ CONDITIONS = [
 ]
 
 TITLE_MAX = 80
+UPLOAD_TYPES = (".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".zip")
 MAX_FAILED_SIGN_INS = 10  # per name, within LOCKOUT_MINUTES, since the last good sign-in
 LOCKOUT_MINUTES = 15
 PAGE_SIZE = 200  # rows per page on the items list
 
 
-def create_app(db_path=None, batches_dir=None):
+def create_app(db_path=None, batches_dir=None, inbox_dir=None):
     app = Flask(__name__)
     app.config.update(
         DB_PATH=db_path or config.DB_PATH,
         BATCHES_DIR=batches_dir or os.path.join(config.ROOT, "batches"),
+        INBOX_DIR=inbox_dir or os.path.join(config.ROOT, "inbox"),
+        MAX_CONTENT_LENGTH=3 * 1024 ** 3,  # a whole tote's photos in one upload
         SECRET_KEY=_secret_key(os.path.dirname(db_path or config.DB_PATH)),
         PERMANENT_SESSION_LIFETIME=datetime.timedelta(days=30),
         SESSION_COOKIE_SAMESITE="Lax",
@@ -345,7 +349,56 @@ def _routes(app):
     @app.route("/drafts")
     @login_required
     def drafts_index():
-        return render_template("drafts.html", batches=_batch_summaries())
+        return render_template("drafts.html", batches=_batch_summaries(), waiting=_uploads_waiting())
+
+    def _uploads_waiting():
+        """Uploaded photo batches that don't have drafts yet."""
+        drafted = set(drafts.batch_names(g.conn))
+        out = []
+        for b in g.conn.execute(
+                "SELECT b.name, b.created_at, l.code AS tote, u.name AS who FROM batches b"
+                " LEFT JOIN locations l ON l.id = b.location_id LEFT JOIN users u ON u.id = b.photographer_id"
+                " WHERE b.source = 'upload' ORDER BY b.created_at DESC"):
+            folder = os.path.join(app.config["INBOX_DIR"], b["name"])
+            if b["name"] not in drafted and os.path.isdir(folder):
+                out.append(dict(b, files=len(os.listdir(folder))))
+        return out
+
+    @app.route("/drafts/upload", methods=["GET", "POST"])
+    @login_required
+    def upload():
+        """Photos (or a zip) of one tote, from a phone or laptop, saved to inbox/<batch>/ for drafting."""
+        if request.method == "POST":
+            try:
+                tote = db.check_code(request.form.get("tote"))
+            except ValueError as e:
+                flash(str(e), "error")
+                return redirect(url_for("upload"))
+            files = [f for f in request.files.getlist("photos") if f.filename]
+            bad = [f.filename for f in files if not f.filename.lower().endswith(UPLOAD_TYPES)]
+            if not files or bad:
+                flash("Choose photos (JPEG, PNG, HEIC) or a zip%s." % (": not %s" % ", ".join(bad[:3]) if bad else ""), "error")
+                return redirect(url_for("upload"))
+            stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M")
+            name = "%s-%s" % (tote.lower(), stamp)
+            folder = os.path.join(app.config["INBOX_DIR"], name)
+            n = 1
+            while os.path.exists(folder) or g.conn.execute("SELECT 1 FROM batches WHERE name = ?", (name,)).fetchone():
+                n += 1
+                name = "%s-%s-%d" % (tote.lower(), stamp, n)
+                folder = os.path.join(app.config["INBOX_DIR"], name)
+            os.makedirs(folder)
+            # Numbered in upload order, which is the order the phone picked them in (dividers between items).
+            for i, f in enumerate(files, 1):
+                f.save(os.path.join(folder, "%03d-%s" % (i, secure_filename(f.filename) or "photo")))
+            with g.conn:
+                batch = db.batch_id(g.conn, name, tote, "upload")
+                g.conn.execute("UPDATE batches SET photographer_id = ? WHERE id = ?", (g.user["id"], batch))
+                db.log_event(g.conn, "batch", name, "uploaded", "web", g.user["id"], data={"tote": tote, "files": len(files)})
+            flash("Uploaded %d files as batch %s. It's ready for drafting." % (len(files), name), "ok")
+            return redirect(url_for("drafts_index"))
+        return render_template("upload.html", codes=sorted(db.totes_in_use(g.conn) | set(db.PLACES)),
+                               suggestion=db.suggest_tote(g.conn))
 
     @app.route("/drafts/<batch>")
     @login_required
