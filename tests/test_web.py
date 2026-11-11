@@ -376,6 +376,13 @@ assert [r[0] for r in fresh().execute("select action from events where entity = 
 # --- shipping, numbers, activity ---
 check(c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "PACKAGED", "days": ""}, follow_redirects=True), has=["packaged"])
 assert c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "DELIVERED"}).status_code == 400
+check(c.get("/picklist"), has=['form="pickbulk"', "Dropped off"])
+check(c.post("/picklist/status", data={"csrf": tok, "status": "PACKAGED"}, follow_redirects=True), has=["Tick the items first"])
+waiting = [r["sku"] for r in orders.pick_list(fresh())][:2]
+check(c.post("/picklist/status", data=MultiDict([("csrf", tok), ("status", "LABEL_PRINTED")] + [("sku", x) for x in waiting + ["MV-00005"]]), follow_redirects=True),
+      has=["%d marked label printed. 1 skipped" % len(waiting)])
+assert all(fresh().execute("select status from items where sku=?", (s,)).fetchone()[0] == "LABEL_PRINTED" for s in waiting)
+assert fresh().execute("select status from items where sku='MV-00005'").fetchone()[0] != "LABEL_PRINTED"
 check(c.get("/sales"), has=["Item sales", "By month", "By sale price", "Listed now"])
 check(c.get("/activity"), has=["Last 30 days by person", "matt", "sam", "signed in"])
 check(c.get("/activity?who=sam"), has=["merged"])

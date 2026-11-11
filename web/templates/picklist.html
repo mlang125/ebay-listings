@@ -30,7 +30,7 @@
   <table class="pick">
     {% for r in rows %}
     <tr class="{{ 'overdue' if r.ship_by and r.ship_by < today else '' }}">
-      <td class="box">☐</td>
+      <td class="box"><span class="onlyprint">☐</span><input type="checkbox" form="pickbulk" name="sku" value="{{ r.sku }}" class="noprint" aria-label="Tick {{ r.sku }}"></td>
       <td class="nowrap"><strong>{{ r.sku }}</strong>{% if r.missing_since %} <span class="tag needs-work">missing</span>{% endif %}</td>
       <td>{{ r.title }}</td>
       <td class="nowrap">ship by {{ r.ship_by or '?' }}</td>
@@ -54,4 +54,15 @@
 {% else %}
 <p>Nothing to ship.</p>
 {% endfor %}
+
+{% if count %}
+<form method="post" action="{{ url_for('picklist_status') }}" id="pickbulk" class="bulk noprint">
+  <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="days" value="{{ days }}">
+  <label class="small"><input type="checkbox" onclick="document.querySelectorAll('input[form=pickbulk][name=sku]').forEach(b => b.checked = this.checked)"> All</label>
+  <span class="muted small">Ticked items:</span>
+  <button name="status" value="LABEL_PRINTED">Label printed</button>
+  <button name="status" value="PACKAGED">Packed</button>
+  <button name="status" value="SENT_TO_POST_OFFICE">Dropped off</button>
+</form>
+{% endif %}
 {% endblock %}

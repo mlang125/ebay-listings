@@ -85,7 +85,7 @@ table.compact td { border: 0; padding: 2px 16px 2px 0; }
 .photos img { height: 220px; border-radius: 6px; display: block; }
 .comps p { margin: 4px 0; }
 
-.print-head { display: none; }
+.print-head, .onlyprint { display: none; }
 .pick-group h2 { margin-top: 18px; }
 table.pick td.box { font-size: 1.3em; width: 1.5em; padding-right: 0; }
 tr.overdue td { color: var(--err); }
@@ -99,6 +99,7 @@ tr.overdue td { color: var(--err); }
   nav.top, .noprint, .flashes { display: none !important; }
   main { max-width: none; padding: 0; }
   .print-head { display: block; margin-bottom: 8px; }
+  .onlyprint { display: inline; }
   table { border: 0; }
   td { padding: 4px 6px; }
   .pick-group { break-inside: avoid; }

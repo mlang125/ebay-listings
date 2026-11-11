@@ -957,11 +957,23 @@ def _routes(app):
     @app.route("/picklist/status", methods=["POST"])
     @login_required
     def picklist_status():
+        """Set one or many pick-list items to a shipping step. Only items still waiting to ship change."""
         status = request.form["status"]
         if status not in ("BOUGHT", "LABEL_PRINTED", "PACKAGED", "SENT_TO_POST_OFFICE"):
             abort(400)
+        skus = request.form.getlist("sku")
+        if not skus:
+            flash("Tick the items first.", "error")
+            return redirect(url_for("picklist", days=request.form.get("days", "")))
+        waiting = {r["sku"] for r in orders.pick_list(g.conn)}
+        changed = [s for s in skus if s in waiting]
         with g.conn:
-            db.set_status(g.conn, request.form["sku"], status, "web", g.user["id"])
+            for sku in changed:
+                db.set_status(g.conn, sku, status, "web", g.user["id"])
+        label = status.replace("_", " ").lower()
+        if len(skus) > 1 or len(changed) < len(skus):
+            flash("%d marked %s." % (len(changed), label) + (
+                " %d skipped (not waiting to ship)." % (len(skus) - len(changed)) if len(changed) < len(skus) else ""), "ok")
         return redirect(url_for("picklist", days=request.form.get("days", "")))
 
     @app.route("/sync", methods=["POST"])
