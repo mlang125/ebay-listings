@@ -468,6 +468,11 @@ assert r.status_code == 500 and "Something went wrong" in r.get_data(as_text=Tru
 
 # --- home page: order sync button ---
 check(c.get("/"), has=["Get new orders from eBay", 'name="back" value="/"', "Last checked"])
+orders._fetch_orders = lambda days: iter(())  # eBay faked: no orders, no network call
+check(c.post("/sync", data={"csrf": tok, "back": "/"}, follow_redirects=True), has=["0 orders checked, 0 new sales."])
+synced = fresh().execute("select at, user_id, data from events where action = 'synced' order by id desc").fetchone()
+assert synced and synced[1] == 1 and json.loads(synced[2])["orders"] == 0, synced
+check(c.get("/"), has=["Last checked " + synced[0].replace("T", " ")[:16]])
 
 # --- nav shows where you are ---
 for page, label in [("/items", "Items"), ("/items/MV-00005", "Items"), ("/totes", "Totes"), ("/picklist", "Pick list"), ("/checks", "Checks")]:

@@ -115,6 +115,9 @@ def sync(conn, days=90, user=None):
                 after = conn.execute("SELECT status FROM items WHERE sku = ?", (sku,)).fetchone()["status"]
                 if after != before:
                     counts["changes"].append((sku, before, after, line["title"]))
+        # Every sync is recorded, even one that finds nothing new, so "orders last checked" is true.
+        db.log_event(conn, "orders", "sync", "synced", "sync", user, data={
+            "days": days, "orders": counts["orders"], "new_lines": counts["new_lines"], "changes": len(counts["changes"])})
     return counts
 
 
