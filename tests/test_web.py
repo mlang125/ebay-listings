@@ -24,6 +24,7 @@ shutil.copytree(os.path.join(ROOT, "batches", "batch1"), os.path.join(S, "batche
 
 from ebay import comps, db, drafts, listings, orders  # noqa: E402
 from web import create_app  # noqa: E402
+from werkzeug.datastructures import MultiDict  # noqa: E402
 conn = db.connect(S + "/ebay.db"); db.set_password(conn, "matt", "testpass123"); db.add_user(conn, "sam", "lister"); db.set_password(conn, "sam", "testpass456"); conn.close()
 
 calls = []
@@ -181,6 +182,38 @@ assert count(html) == n90 and n90 > 0
 days = [int(x) for x in re.findall(r'<td class="num">(\d+)</td>\s*<td class="nowrap small">', html)]
 assert days and min(days) >= 90 and days == sorted(days), days[:5]
 assert count(check(c.get("/items?status=LISTED&min_price=abc"))) == n_listed, "a bad number is ignored, not an error"
+
+# --- bulk actions ---
+check(c.get("/items?tote=UN"), has=["Tick all", "Move to tote", "Set status"])
+un = db.on_hand(fresh(), "UN")[:3]
+assert len(un) == 3
+def bulk(data, client=None, token=None):
+    client, token = client or c, token or tok
+    pairs = [("csrf", token), ("back", "/items?tote=UN")] + [("sku", x) for x in data.pop("skus", [])] + list(data.items())
+    return check(client.post("/items/bulk", data=MultiDict(pairs), follow_redirects=True))
+assert "Moved 2 items to W9" in bulk({"skus": un[:2], "action": "move", "tote": "w9"})
+assert db.on_hand(fresh(), "W9") == sorted(un[:2])
+assert "Unknown SKU: MV-99999. Nothing was changed." in bulk({"skus": [un[2], "MV-99999"], "action": "move", "tote": "W9"})
+assert un[2] in db.on_hand(fresh(), "UN"), "all or nothing"
+assert "Nothing was changed" in bulk({"skus": [un[2]], "action": "move", "tote": "not a tote"})
+assert "Tick at least one item" in bulk({"action": "move", "tote": "W9"})
+assert "Pick a status" in bulk({"skus": un, "action": "status", "status": ""})
+assert "Marked 3 items missing" in bulk({"skus": un, "action": "missing"}, sam, stok)
+assert fresh().execute("select count(*) from items where sku in (?, ?, ?) and missing_since is not null", un).fetchone()[0] == 3
+assert "Marked 3 items found" in bulk({"skus": un, "action": "found"})
+before = {r[0]: r[1] for r in fresh().execute("select sku, status from items where sku in (?, ?, ?)", un)}
+assert "Set 3 items to ENDED" in bulk({"skus": un, "action": "status", "status": "ENDED", "note": "test bulk"})
+ev = fresh().execute("select u.name, e.data from events e join users u on u.id = e.user_id where e.entity_id = ? and e.action = 'status' and e.id > ? order by e.id desc", (un[0], START)).fetchone()
+assert ev[0] == "matt" and json.loads(ev[1]) == {"note": "test bulk", "manual": True, "bulk": 3}, tuple(ev)
+missing_ev = fresh().execute("select u.name from events e join users u on u.id = e.user_id where e.entity_id = ? and e.action = 'missing' and e.id > ?", (un[0], START)).fetchone()
+assert missing_ev[0] == "sam"
+# the tote page has the same bar, posting the same form
+on_w9 = db.on_hand(fresh(), "W9")
+html = check(c.get("/totes/W9"), has=["Tick all", "Move to tote"])
+assert 'name="sku" value="%s"' % on_w9[0] in html
+r = c.post("/items/bulk", data=MultiDict([("csrf", tok), ("back", "/totes/W9"), ("sku", on_w9[0]), ("action", "move"), ("tote", "W8")]))
+assert r.status_code == 302 and r.location.endswith("/totes/W9")
+assert db.on_hand(fresh(), "W8") == [on_w9[0]]
 
 # --- shipping, numbers, activity ---
 check(c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "PACKAGED", "days": ""}, follow_redirects=True), has=["packaged"])

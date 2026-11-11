@@ -442,7 +442,7 @@ def _routes(app):
             "SELECT DISTINCT l.code FROM locations l JOIN items i ON i.location_id = l.id"
             " ORDER BY l.kind = 'place', substr(l.code, 1, 1), CAST(substr(l.code, 2) AS INTEGER)")]
         return render_template("items.html", rows=rows, total=total, f=f, statuses=db.STATUSES, totes=totes,
-                               filtered=any(f.values()))
+                               filtered=any(f.values()), suggestion=db.suggest_tote(g.conn))
 
     @app.route("/items/<sku>", methods=["GET", "POST"])
     @login_required
@@ -486,6 +486,47 @@ def _routes(app):
         return render_template("item.html", row=row, events=events, listings=item_listings, sales=item_sales,
                                statuses=db.STATUSES, parse_json=_parse_json, relist_of=relist_of,
                                relistable=db.RELISTABLE)
+
+    @app.route("/items/bulk", methods=["POST"])
+    @login_required
+    def items_bulk():
+        """One action on every ticked item: move, missing, found or set status. All or nothing."""
+        skus = list(dict.fromkeys(s.upper() for s in request.form.getlist("sku")))
+        action = request.form.get("action", "")
+        back = request.form.get("back", "")
+        back = back if back.startswith("/") and not back.startswith("//") else url_for("items")
+        if not skus:
+            flash("Tick at least one item first.", "error")
+            return redirect(back)
+        user = g.user["id"]
+        try:
+            with g.conn:
+                unknown = [s for s in skus if not g.conn.execute("SELECT 1 FROM items WHERE sku = ?", (s,)).fetchone()]
+                if unknown:
+                    raise ValueError("Unknown SKU: %s" % ", ".join(unknown))
+                if action == "move":
+                    code = db.check_code(request.form.get("tote"))
+                    for sku in skus:
+                        db.move(g.conn, sku, code, "web", user)
+                    done = "Moved %d items to %s." % (len(skus), code)
+                elif action in ("missing", "found"):
+                    for sku in skus:
+                        db.set_missing(g.conn, sku, action == "missing", "web", user)
+                    done = "Marked %d items %s." % (len(skus), action)
+                elif action == "status":
+                    status = request.form.get("status", "")
+                    if status not in db.STATUSES:
+                        raise ValueError("Pick a status.")
+                    note = request.form.get("note", "").strip() or None
+                    for sku in skus:
+                        db.set_status(g.conn, sku, status, "web", user, data={"note": note, "manual": True, "bulk": len(skus)})
+                    done = "Set %d items to %s." % (len(skus), status)
+                else:
+                    raise ValueError("Pick an action.")
+            flash(done, "ok")
+        except ValueError as e:
+            flash("%s. Nothing was changed." % str(e).rstrip("."), "error")
+        return redirect(back)
 
     @app.route("/items/<sku>/missing", methods=["POST"])
     @login_required
@@ -595,7 +636,7 @@ def _routes(app):
             " WHERE e.entity = 'location' AND e.entity_id = ? AND e.action = 'checked' ORDER BY e.id DESC LIMIT 1", (code,)
         ).fetchone()
         return render_template("tote.html", code=code, place=place, rows=here, gone=gone, codes=codes,
-                               suggestion=db.suggest_tote(g.conn), checked=checked)
+                               suggestion=db.suggest_tote(g.conn), checked=checked, statuses=db.STATUSES)
 
     @app.route("/totes/<code>/checked", methods=["POST"])
     @login_required

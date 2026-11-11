@@ -5,3 +5,42 @@
   <a class="sort" href="{{ sort_url(key) }}">{{ label }}<span class="sort-mark" aria-hidden="true">{{ sort_mark(key) }}</span></a>
 </th>
 {%- endmacro %}
+
+{# Checkbox column header that ticks every row checkbox in the same form. #}
+{% macro tick_all() -%}
+<th class="tick"><input type="checkbox" aria-label="Tick all" onclick="this.form.querySelectorAll('input[name=sku]').forEach(function (b) { b.checked = this.checked; }, this); bulkCount(this.form)"></th>
+{%- endmacro %}
+
+{% macro tick(sku) -%}
+<td class="tick"><input type="checkbox" name="sku" value="{{ sku }}" aria-label="Tick {{ sku }}" onchange="bulkCount(this.form)"></td>
+{%- endmacro %}
+
+{# Actions for the ticked rows. Posts to /items/bulk with the form's ticked SKUs. #}
+{% macro bulk_bar(statuses, back, suggestion) -%}
+<div class="bulk card">
+  <strong class="bulk-count">No items ticked</strong>
+  <input type="hidden" name="back" value="{{ back }}">
+  <span class="bulk-group">
+    <input name="tote" list="codes" size="5" class="tote-input" placeholder="{{ suggestion }}" autocapitalize="characters" aria-label="Tote to move ticked items to">
+    <button formaction="{{ url_for('items_bulk') }}" name="action" value="move">Move to tote</button>
+  </span>
+  <span class="bulk-group">
+    <button formaction="{{ url_for('items_bulk') }}" name="action" value="missing">Missing</button>
+    <button formaction="{{ url_for('items_bulk') }}" name="action" value="found">Found</button>
+  </span>
+  <span class="bulk-group">
+    <select name="status" aria-label="New status"><option value="">Status…</option>
+      {% for s in statuses %}<option value="{{ s }}">{{ s|replace('_', ' ')|lower|capitalize }}</option>{% endfor %}</select>
+    <input name="note" placeholder="why (optional)" size="12" aria-label="Note for the status change">
+    <button formaction="{{ url_for('items_bulk') }}" name="action" value="status"
+            onclick="return confirm('Change the status of the ticked items?')">Set status</button>
+  </span>
+</div>
+<script>
+  function bulkCount(form) {
+    var n = form.querySelectorAll('input[name=sku]:checked').length;
+    form.querySelector('.bulk-count').textContent = n ? n + ' ticked' : 'No items ticked';
+    form.querySelector('.bulk').classList.toggle('active', n > 0);
+  }
+</script>
+{%- endmacro %}

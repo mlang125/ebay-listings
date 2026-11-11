@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Tote {{ code }}{% endblock %}
-{% from "_macros.html" import th with context %}
+{% from "_macros.html" import th, tick, tick_all, bulk_bar with context %}
 {% block body %}
 <div class="head">
   <h1>{{ code }} <span class="muted">{{ rows|length }} on hand</span></h1>
@@ -43,18 +43,19 @@
     </span>
   </div>
   <table>
-    <tr>{{ th('SKU', 'sku') }}{{ th('Status', 'status') }}{{ th('Price', 'price', num=True) }}{{ th('Title', 'title') }}<th>Move to</th><th></th></tr>
+    <tr>{{ tick_all() }}{{ th('SKU', 'sku') }}{{ th('Status', 'status') }}{{ th('Price', 'price', num=True) }}{{ th('Title', 'title') }}<th>Move to</th><th></th></tr>
     {% for r in rows %}
     <tr class="{{ 'missing' if r.missing_since else '' }}">
+      {{ tick(r.sku) }}
       <td><a href="{{ url_for('item', sku=r.sku) }}">{{ r.sku }}</a></td>
       <td>{{ r.status }}{% if r.missing_since %} <span class="tag needs-work">missing</span>{% endif %}</td>
       <td class="num">{{ money(r.price) }}</td><td>{{ r.title }}</td>
       <td><input name="to_{{ r.sku }}" list="codes" size="5" class="tote-input" autocapitalize="characters" aria-label="Move {{ r.sku }} to"></td>
-      <td><input type="hidden" name="back" value="{{ url_for('tote', code=code) }}">
-        <button class="small" formaction="{{ url_for('item_missing', sku=r.sku) }}" name="missing" value="{{ '0' if r.missing_since else '1' }}">{{ 'Found' if r.missing_since else 'Missing' }}</button></td>
+      <td><button class="small" formaction="{{ url_for('item_missing', sku=r.sku) }}" name="missing" value="{{ '0' if r.missing_since else '1' }}">{{ 'Found' if r.missing_since else 'Missing' }}</button></td>
     </tr>
     {% endfor %}
   </table>
+  {{ bulk_bar(statuses, request.full_path, suggestion) }}
 </form>
 {% else %}
 <p class="muted">Nothing on hand in {{ code }}.</p>

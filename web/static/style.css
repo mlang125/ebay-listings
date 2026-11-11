@@ -125,3 +125,12 @@ th a.sort:hover { color: var(--text); }
 .sort-mark { display: inline-block; width: 1em; margin-left: 2px; font-size: 0.8em; }
 .filters a.clear { align-self: center; }
 .filters input[size] { flex: 0 1 auto; }
+
+th.tick, td.tick { width: 2em; padding-right: 0; }
+th.tick input, td.tick input { width: 1.1em; height: 1.1em; margin: 0; }
+.bulk { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 8px 12px; }
+.bulk .bulk-group { display: inline-flex; gap: 6px; align-items: center; }
+.bulk select, .bulk input { width: auto; margin: 0; }
+.bulk button { opacity: 0.5; }
+.bulk.active button { opacity: 1; }
+.bulk.active { border-color: var(--accent); }

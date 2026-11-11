@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Items{% endblock %}
-{% from "_macros.html" import th with context %}
+{% from "_macros.html" import th, tick, tick_all, bulk_bar with context %}
 {% block body %}
 <h1>Items <span class="muted">{{ total }}{% if filtered %} found{% endif %}</span></h1>
 <form class="filters">
@@ -22,10 +22,15 @@
   <button class="primary">Search</button>
   {% if filtered %}<a href="{{ url_for('items') }}" class="clear">Clear</a>{% endif %}
 </form>
+<datalist id="codes">{% for t in totes %}<option value="{{ t }}">{% endfor %}<option value="{{ suggestion }}">next free</option></datalist>
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+{{ bulk_bar(statuses, request.full_path, suggestion) }}
 <table>
-  <tr>{{ th('SKU', 'sku') }}{{ th('Status', 'status') }}{{ th('Tote', 'tote') }}{{ th('Price', 'price', num=True) }}{{ th('Title', 'title') }}{{ th('Days listed', 'days', num=True) }}{{ th('Last change', 'changed') }}</tr>
+  <tr>{{ tick_all() }}{{ th('SKU', 'sku') }}{{ th('Status', 'status') }}{{ th('Tote', 'tote') }}{{ th('Price', 'price', num=True) }}{{ th('Title', 'title') }}{{ th('Days listed', 'days', num=True) }}{{ th('Last change', 'changed') }}</tr>
   {% for r in rows %}
   <tr>
+    {{ tick(r.sku) }}
     <td><a href="{{ url_for('item', sku=r.sku) }}">{{ r.sku }}</a></td>
     <td>{{ r.status }}{% if r.missing_since %} <span class="tag needs-work">missing</span>{% endif %}</td>
     <td>{% if r.tote %}<a href="{{ url_for('tote', code=r.tote) }}">{{ r.tote }}</a>{% else %}<span class="muted">?</span>{% endif %}</td>
@@ -35,8 +40,9 @@
     <td class="nowrap small">{{ (r.last_change or '')[:10] }}</td>
   </tr>
   {% else %}
-  <tr><td colspan="7" class="muted">No items match.</td></tr>
+  <tr><td colspan="8" class="muted">No items match.</td></tr>
   {% endfor %}
 </table>
+</form>
 {% if total > rows|length %}<p class="muted">Showing {{ rows|length }} of {{ total }}. Narrow the search to see the rest.</p>{% endif %}
 {% endblock %}
