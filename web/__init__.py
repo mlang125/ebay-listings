@@ -804,8 +804,16 @@ def _routes(app):
             "SELECT e.at, u.name FROM events e LEFT JOIN users u ON u.id = e.user_id"
             " WHERE e.entity = 'location' AND e.entity_id = ? AND e.action = 'checked' ORDER BY e.id DESC LIMIT 1", (code,)
         ).fetchone()
+        history = g.conn.execute(
+            "SELECT e.*, u.name AS user FROM events e LEFT JOIN users u ON u.id = e.user_id"
+            " WHERE (e.entity = 'location' AND e.entity_id = ?)"
+            " OR (e.entity = 'location' AND e.action = 'merged' AND json_extract(e.data, '$.into') = ?)"
+            " OR (e.entity = 'item' AND e.action = 'moved'"
+            "     AND (json_extract(e.data, '$.to') = ? OR json_extract(e.data, '$.from') = ?))"
+            " ORDER BY e.id DESC LIMIT 50", (code, code, code, code)).fetchall()
         return render_template("tote.html", code=code, place=place, rows=here, gone=gone, codes=codes,
-                               suggestion=db.suggest_tote(g.conn), checked=checked, statuses=db.STATUSES)
+                               suggestion=db.suggest_tote(g.conn), checked=checked, statuses=db.STATUSES,
+                               history=history)
 
     @app.route("/labels")
     @login_required

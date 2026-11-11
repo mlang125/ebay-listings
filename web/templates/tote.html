@@ -62,6 +62,24 @@
 <p class="muted">Nothing on hand in {{ code }}.</p>
 {% endif %}
 
+{% if history %}
+<details>
+  <summary class="muted">Recent changes ({{ history|length }}{{ '+' if history|length == 50 else '' }})</summary>
+  <table>
+    {% for e in history %}
+    <tr>
+      <td class="nowrap small">{{ e.at.replace('T', ' ')[:16] }}</td>
+      <td>{{ e.user or ('(' + e.actor + ')') }}</td>
+      <td>{% if e.entity == 'item' %}<a href="{{ url_for('item', sku=e.entity_id) }}">{{ e.entity_id }}</a>
+          {% elif e.entity_id != code %}<a href="{{ url_for('tote', code=e.entity_id) }}">{{ e.entity_id }}</a>{% endif %}
+          {{ e.action|replace('_', ' ') }}</td>
+      <td class="muted small">{{ event_details(e.data) }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</details>
+{% endif %}
+
 {% if gone %}
 <details>
   <summary class="muted">{{ gone|length }} shipped from here</summary>

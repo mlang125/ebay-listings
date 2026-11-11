@@ -319,6 +319,11 @@ html = check(c.get("/items/MV-00001"), has=['class="photos small-photos"', "/pho
 no_draft = fresh().execute("select sku from items where sku not in (select sku from drafts) limit 1").fetchone()[0]
 assert 'small-photos' not in check(c.get("/items/" + no_draft)), "items without a draft have no photo strip"
 
+# --- tote history ---
+html = check(c.get("/totes/" + FREE), has=["Recent changes", "split", "checked", "merged"])
+assert "to: T9" in html or "T9" in html
+html = check(c.get("/totes/W9"), has=["Recent changes", "moved", "to: W9", "to: W8"])
+
 # --- shipping, numbers, activity ---
 check(c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "PACKAGED", "days": ""}, follow_redirects=True), has=["packaged"])
 assert c.post("/picklist/status", data={"csrf": tok, "sku": SHIP, "status": "DELIVERED"}).status_code == 400
