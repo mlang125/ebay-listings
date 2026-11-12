@@ -110,8 +110,9 @@ that's what lets the app swipe back to an earlier item.
 
 | Method | Path | What |
 |---|---|---|
-| GET | /home | *planned* The home page's attention list, today's counts, what's due |
-| GET | /checks | *planned* |
-| GET | /sales | *planned* |
-| GET | /activity | *planned* |
-| GET, POST, PATCH | /users | *planned* Admins only |
+| GET | /home | The home page: `attention` (each `{"key", "count", "what", "list", "filters"}`; `list` is `items`, `picklist`, `relists`, `totes` or `checks`, and for `items` the filters are /items query parameters), `counts` by status, `to_ship`, `overdue` and `due_today` SKUs, `today`'s work, `last_sync` |
+| GET | /checks | Records that look wrong: `{"checks": [{"what", "why", "items": [{"sku", "title", "detail"}]}], "last_listing_check"}` |
+| GET | /sales | `summary`, `months`, `bands` (sales by price), `active` (what's listed) |
+| GET | /activity | Events newest first: `who` (a name, or `(none)` for unattended), `action`, `q` (a SKU or tote), `limit`/`offset` |
+| GET | /users | Everyone, with role, on/off, last sign-in and how many changes they've made |
+| POST | /users | Admins only: `{"action": "add", "name", "role", "password"}`, or `password`, `disable`, `enable`, `role`. A new password ends that person's other sign-ins; changing your own keeps this device signed in |

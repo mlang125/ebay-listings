@@ -357,6 +357,154 @@ def require_role(*roles):
         abort(403, "Only %s can do that." % " or ".join(r + "s" for r in roles))
 
 
+def change_user(conn, form, me, actor):
+    """An admin's change to the people list, from a form or JSON body: action add (name, role, password),
+    password (name, password), disable, enable or role (name, role). Logged. Returns (what happened,
+    the new password hash when `me` changed their own password, else None). Raises ValueError."""
+    action, name = form.get("action"), str(form.get("name") or "").strip().lower()
+    password, role = str(form.get("password") or ""), form.get("role")
+    own_hash = None
+    if action == "add":
+        if not re.fullmatch(r"[a-z][a-z0-9_.-]{1,30}", name):
+            raise ValueError("Names are 2-31 letters or digits, starting with a letter.")
+        if role not in db.ROLES:
+            raise ValueError("Pick a role.")
+        if conn.execute("SELECT 1 FROM users WHERE name = ?", (name,)).fetchone():
+            raise ValueError("There's already a %s." % name)
+        if len(password) < 8:
+            raise ValueError("Passwords need at least 8 characters.")
+        conn.execute("INSERT INTO users (name, role, created_at, password_hash) VALUES (?, ?, ?, ?)",
+                     (name, role, db.now(), generate_password_hash(password)))
+        done = "Added %s (%s)." % (name, role)
+    else:
+        target = conn.execute("SELECT * FROM users WHERE name = ?", (name,)).fetchone()
+        if target is None:
+            raise ValueError("No user %s." % name)
+        if action == "password":
+            if len(password) < 8:
+                raise ValueError("Passwords need at least 8 characters.")
+            new_hash = generate_password_hash(password)
+            conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, target["id"]))
+            own_hash = new_hash if target["id"] == me["id"] else None
+            done = "New password set for %s. They're signed out everywhere else." % name
+        elif action in ("disable", "enable"):
+            if target["id"] == me["id"]:
+                raise ValueError("You can't turn off your own account.")
+            conn.execute("UPDATE users SET active = ? WHERE id = ?", (action == "enable", target["id"]))
+            done = "%s is %s." % (name, "back on" if action == "enable" else "turned off and can't sign in")
+        elif action == "role" and role in db.ROLES:
+            if target["id"] == me["id"] and role != "admin":
+                raise ValueError("You can't take away your own admin role.")
+            conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, target["id"]))
+            done = "%s is now a %s." % (name, role)
+        else:
+            raise ValueError("Pick an action.")
+    db.log_event(conn, "user", name, "user_" + action, actor, me["id"],
+                 data={"role": role} if action in ("add", "role") else None)
+    return done, own_hash
+
+
+USERS_SQL = ("SELECT u.*, (SELECT MAX(at) FROM events WHERE entity = 'user' AND entity_id = u.name"
+             " AND action = 'signed_in') AS last_in, (SELECT COUNT(*) FROM events WHERE user_id = u.id) AS changes"
+             " FROM users u ORDER BY u.active DESC, u.name")
+
+
+def activity_rows(conn, who="", action="", q="", limit=100, offset=0):
+    """Events newest first, optionally by person (name, or "(none)" for unattended), action and SKU or code."""
+    sql = "SELECT e.*, u.name AS user FROM events e LEFT JOIN users u ON u.id = e.user_id WHERE 1 = 1"
+    params = []
+    if who == "(none)":
+        sql += " AND e.user_id IS NULL"
+    elif who:
+        sql += " AND u.name = ?"
+        params.append(who)
+    if action:
+        sql += " AND e.action = ?"
+        params.append(action)
+    if q:
+        sql += " AND e.entity_id = ?"
+        params.append(q)
+    return conn.execute(sql + " ORDER BY e.id DESC LIMIT ? OFFSET ?", (*params, limit, offset)).fetchall()
+
+
+# The home page's "needs attention" list: (key, what, SQL count, the list to open as (endpoint, filters)).
+ON_HAND = "i.status NOT IN ('SENT_TO_POST_OFFICE', 'DELIVERED')"
+ATTENTION = [
+    ("unbinned", "in UN, waiting for a tote",
+     "SELECT COUNT(*) FROM items i JOIN locations l ON l.id = i.location_id WHERE l.code = 'UN' AND " + ON_HAND,
+     ("items", {"tote": "UN", "status": "ON_HAND"})),
+    ("stuck", "labelled or packed %d+ days ago and not shipped yet" % STUCK_DAYS,
+     "SELECT COUNT(*) FROM items i WHERE i.status IN ('LABEL_PRINTED', 'PACKAGED')"
+     " AND (SELECT replace(e.at, 'T', ' ') FROM events e WHERE e.entity = 'item' AND e.entity_id = i.sku"
+     "      AND e.action = 'status' ORDER BY e.id DESC LIMIT 1)"
+     " < datetime('now', 'localtime', '-%d days')" % STUCK_DAYS,
+     ("picklist", {})),
+    ("missing", "marked missing", "SELECT COUNT(*) FROM items i WHERE i.missing_since IS NOT NULL AND " + ON_HAND,
+     ("items", {"status": "MISSING"})),
+    ("not_relisted", "cancelled or returned and not relisted",
+     "SELECT COUNT(*) FROM items WHERE status IN (%s) AND relisted_as IS NULL" % ",".join("'%s'" % st for st in db.RELISTABLE),
+     ("relists", {})),
+    ("stale", "listed 90+ days (consider a price drop)",
+     "SELECT COUNT(*) FROM items i WHERE i.status = 'LISTED' AND {DAYS_LISTED} >= 90",
+     ("items", {"status": "LISTED", "min_days": 90, "sort": "days", "dir": "desc"})),
+    ("suggested", "price suggestions to change on eBay",
+     "SELECT COUNT(*) FROM items i WHERE i.status = 'LISTED' AND {LATEST_SUGGESTION} IS NOT NULL",
+     ("items", {"status": "SUGGESTED"})),
+    ("no_tote", "on hand with no known tote", "SELECT COUNT(*) FROM items i WHERE i.location_id IS NULL AND " + ON_HAND,
+     ("items", {"tote": "?", "status": "ON_HAND"})),
+    ("unchecked_totes", "totes never checked",
+     "SELECT COUNT(DISTINCT l.id) FROM locations l JOIN items i ON i.location_id = l.id"
+     " WHERE l.kind = 'tote' AND l.checked_at IS NULL AND " + ON_HAND,
+     ("totes", {"unchecked": 1})),
+]
+
+
+def attention(conn):
+    """Things someone should look at: [(key, count, what, (endpoint, filters))], zero counts left out."""
+    found = []
+    for key, what, sql, target in ATTENTION:
+        n = conn.execute(sql.replace("{DAYS_LISTED}", DAYS_LISTED).replace("{LATEST_SUGGESTION}", db.LATEST_SUGGESTION)).fetchone()[0]
+        found.append((key, n, what, target))
+    problems = sum(len(rows) for _, _, rows in data_checks(conn, limit=1))
+    found.append(("record_problems", problems, "kind%s of record problem (see Checks)" % ("" if problems == 1 else "s"),
+                  ("checks", {})))
+    return [f for f in found if f[1]]
+
+
+# Record problems worth fixing by hand: (what, why it matters, SQL giving sku, title, detail).
+DATA_CHECKS = [
+    ("Listed with no price", "The sales numbers and price drops need it.",
+     "SELECT sku, title, NULL FROM items WHERE status = 'LISTED' AND (price IS NULL OR price <= 0)"),
+    ("No title", "Nobody can find it by searching.",
+     "SELECT sku, title, status FROM items WHERE status NOT IN ('SENT_TO_POST_OFFICE', 'DELIVERED')"
+     " AND (title IS NULL OR TRIM(title) = '')"),
+    ("Title over 80 characters", "eBay cuts titles at 80.",
+     "SELECT sku, title, LENGTH(title) || ' characters' FROM items WHERE status IN ('PENDING', 'LISTED') AND LENGTH(title) > 80"),
+    ("Listed with no eBay listing ID", "It can't be matched to orders, so a sale won't update it.",
+     "SELECT i.sku, i.title, NULL FROM items i WHERE i.status = 'LISTED'"
+     " AND NOT EXISTS (SELECT 1 FROM listings l WHERE l.sku = i.sku)"),
+    ("Same title listed more than once", "Fine for two of the same thing; otherwise it may be listed twice.",
+     "SELECT i.sku, i.title, l.code FROM items i LEFT JOIN locations l ON l.id = i.location_id WHERE i.status = 'LISTED'"
+     " AND LOWER(TRIM(i.title)) IN (SELECT LOWER(TRIM(title)) FROM items WHERE status = 'LISTED'"
+     " GROUP BY LOWER(TRIM(title)) HAVING COUNT(*) > 1) ORDER BY LOWER(TRIM(i.title)), i.sku"),
+    ("Sold with no order", "Sales numbers miss it. Usually an order sync fixes it.",
+     "SELECT i.sku, i.title, i.status FROM items i"
+     " WHERE i.status IN ('BOUGHT', 'LABEL_PRINTED', 'PACKAGED', 'SENT_TO_POST_OFFICE', 'DELIVERED')"
+     " AND NOT EXISTS (SELECT 1 FROM order_lines o WHERE o.sku = i.sku)"),
+    ("Cost at or above the price", "It loses money if it sells at this price.",
+     "SELECT sku, title, printf('cost $%.2f, price $%.2f', cost, price) FROM items"
+     " WHERE status IN ('PENDING', 'LISTED') AND cost IS NOT NULL AND price IS NOT NULL AND cost >= price"),
+    ("Shipped but still marked missing", "Missing only matters for items on hand.",
+     "SELECT sku, title, status FROM items WHERE status IN ('SENT_TO_POST_OFFICE', 'DELIVERED') AND missing_since IS NOT NULL"),
+]
+
+def data_checks(conn, limit=100):
+    """Each check as (what, why, rows), rows limited to `limit`."""
+    return [(what, why, conn.execute(sql + ("" if "ORDER BY" in sql else " ORDER BY 1") + " LIMIT ?", (limit,)).fetchall())
+            for what, why, sql in DATA_CHECKS]
+
+
+
 def _routes(app):
     @app.before_request
     def open_db():
@@ -475,73 +623,13 @@ def _routes(app):
         return g.conn.execute("SELECT MAX(at) FROM events WHERE actor = 'sync'").fetchone()[0]
 
     def _attention(conn):
-        """Things someone should look at, each with a count and a link to the list. Zero counts are left out."""
-        def n(sql, *params):
-            return conn.execute(sql, params).fetchone()[0]
-        on_hand = "i.status NOT IN ('SENT_TO_POST_OFFICE', 'DELIVERED')"
-        found = [
-            (n("SELECT COUNT(*) FROM items i JOIN locations l ON l.id = i.location_id WHERE l.code = 'UN' AND " + on_hand),
-             "in UN, waiting for a tote", url_for("items", tote="UN", status="ON_HAND")),
-            (n("SELECT COUNT(*) FROM items i WHERE i.status IN ('LABEL_PRINTED', 'PACKAGED')"
-               " AND (SELECT replace(e.at, 'T', ' ') FROM events e WHERE e.entity = 'item' AND e.entity_id = i.sku"
-               "      AND e.action = 'status' ORDER BY e.id DESC LIMIT 1)"
-               " < datetime('now', 'localtime', '-%d days')" % STUCK_DAYS),
-             "labelled or packed %d+ days ago and not shipped yet" % STUCK_DAYS, url_for("picklist")),
-            (n("SELECT COUNT(*) FROM items i WHERE i.missing_since IS NOT NULL AND " + on_hand),
-             "marked missing", url_for("items", status="MISSING")),
-            (n("SELECT COUNT(*) FROM items WHERE status IN (?, ?, ?) AND relisted_as IS NULL", *db.RELISTABLE),
-             "cancelled or returned and not relisted", url_for("relists")),
-            (n("SELECT COUNT(*) FROM items i WHERE i.status = 'LISTED' AND " + DAYS_LISTED + " >= 90"),
-             "listed 90+ days (consider a price drop)", url_for("items", status="LISTED", min_days=90, sort="days", dir="desc")),
-            (n("SELECT COUNT(*) FROM items i WHERE i.status = 'LISTED' AND " + db.LATEST_SUGGESTION + " IS NOT NULL"),
-             "price suggestions to change on eBay", url_for("items", status="SUGGESTED")),
-            (n("SELECT COUNT(*) FROM items i WHERE i.location_id IS NULL AND " + on_hand),
-             "on hand with no known tote", url_for("items", tote="?", status="ON_HAND")),
-            (n("SELECT COUNT(DISTINCT l.id) FROM locations l JOIN items i ON i.location_id = l.id"
-               " WHERE l.kind = 'tote' AND l.checked_at IS NULL AND " + on_hand),
-             "totes never checked", url_for("totes", unchecked=1)),
-        ]
-        problems = sum(len(rows) for _, _, rows in _data_checks(conn, limit=1))
-        if problems:
-            found.append((problems, "kind%s of record problem (see Checks)" % ("" if problems == 1 else "s"), url_for("checks")))
-        return [f for f in found if f[0]]
-
-    # Record problems worth fixing by hand: (what, why it matters, SQL giving sku, title, detail).
-    DATA_CHECKS = [
-        ("Listed with no price", "The sales numbers and price drops need it.",
-         "SELECT sku, title, NULL FROM items WHERE status = 'LISTED' AND (price IS NULL OR price <= 0)"),
-        ("No title", "Nobody can find it by searching.",
-         "SELECT sku, title, status FROM items WHERE status NOT IN ('SENT_TO_POST_OFFICE', 'DELIVERED')"
-         " AND (title IS NULL OR TRIM(title) = '')"),
-        ("Title over 80 characters", "eBay cuts titles at 80.",
-         "SELECT sku, title, LENGTH(title) || ' characters' FROM items WHERE status IN ('PENDING', 'LISTED') AND LENGTH(title) > 80"),
-        ("Listed with no eBay listing ID", "It can't be matched to orders, so a sale won't update it.",
-         "SELECT i.sku, i.title, NULL FROM items i WHERE i.status = 'LISTED'"
-         " AND NOT EXISTS (SELECT 1 FROM listings l WHERE l.sku = i.sku)"),
-        ("Same title listed more than once", "Fine for two of the same thing; otherwise it may be listed twice.",
-         "SELECT i.sku, i.title, l.code FROM items i LEFT JOIN locations l ON l.id = i.location_id WHERE i.status = 'LISTED'"
-         " AND LOWER(TRIM(i.title)) IN (SELECT LOWER(TRIM(title)) FROM items WHERE status = 'LISTED'"
-         " GROUP BY LOWER(TRIM(title)) HAVING COUNT(*) > 1) ORDER BY LOWER(TRIM(i.title)), i.sku"),
-        ("Sold with no order", "Sales numbers miss it. Usually an order sync fixes it.",
-         "SELECT i.sku, i.title, i.status FROM items i"
-         " WHERE i.status IN ('BOUGHT', 'LABEL_PRINTED', 'PACKAGED', 'SENT_TO_POST_OFFICE', 'DELIVERED')"
-         " AND NOT EXISTS (SELECT 1 FROM order_lines o WHERE o.sku = i.sku)"),
-        ("Cost at or above the price", "It loses money if it sells at this price.",
-         "SELECT sku, title, printf('cost $%.2f, price $%.2f', cost, price) FROM items"
-         " WHERE status IN ('PENDING', 'LISTED') AND cost IS NOT NULL AND price IS NOT NULL AND cost >= price"),
-        ("Shipped but still marked missing", "Missing only matters for items on hand.",
-         "SELECT sku, title, status FROM items WHERE status IN ('SENT_TO_POST_OFFICE', 'DELIVERED') AND missing_since IS NOT NULL"),
-    ]
-
-    def _data_checks(conn, limit=100):
-        return [(what, why, conn.execute(sql + ("" if "ORDER BY" in sql else " ORDER BY 1") + " LIMIT ?", (limit,)).fetchall())
-                for what, why, sql in DATA_CHECKS]
+        return [(n, what, url_for(endpoint, **args)) for _, n, what, (endpoint, args) in attention(conn)]
 
     @app.route("/checks")
     @login_required
     def checks():
         """Records that look wrong. Nothing here changes anything; each row links to the item to fix."""
-        found = _data_checks(g.conn)
+        found = data_checks(g.conn)
         return render_template("checks.html", found=[f for f in found if f[2]], clean=[f[0] for f in found if not f[2]],
                                statuses=db.STATUSES, suggestion=db.suggest_tote(g.conn),
                                last_check=g.conn.execute("SELECT MAX(at) FROM events WHERE entity = 'listings'"
@@ -1257,57 +1345,16 @@ def _routes(app):
         """Admins add people, reset passwords and turn accounts off. Everything is logged."""
         if request.method == "POST":
             require_role("admin")
-            form = request.form
-            action, name = form.get("action"), form.get("name", "").strip().lower()
-            password = form.get("password", "")
             try:
                 with g.conn:
-                    if action == "add":
-                        if not re.fullmatch(r"[a-z][a-z0-9_.-]{1,30}", name):
-                            raise ValueError("Names are 2-31 letters or digits, starting with a letter.")
-                        if form.get("role") not in db.ROLES:
-                            raise ValueError("Pick a role.")
-                        if g.conn.execute("SELECT 1 FROM users WHERE name = ?", (name,)).fetchone():
-                            raise ValueError("There's already a %s." % name)
-                        if len(password) < 8:
-                            raise ValueError("Passwords need at least 8 characters.")
-                        g.conn.execute("INSERT INTO users (name, role, created_at, password_hash) VALUES (?, ?, ?, ?)",
-                                       (name, form["role"], db.now(), generate_password_hash(password)))
-                        done = "Added %s (%s)." % (name, form["role"])
-                    else:
-                        target = g.conn.execute("SELECT * FROM users WHERE name = ?", (name,)).fetchone()
-                        if target is None:
-                            raise ValueError("No user %s." % name)
-                        if action == "password":
-                            if len(password) < 8:
-                                raise ValueError("Passwords need at least 8 characters.")
-                            new_hash = generate_password_hash(password)
-                            g.conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, target["id"]))
-                            if target["id"] == g.user["id"]:
-                                session["pw"] = _password_mark(new_hash)  # stay signed in here
-                            done = "New password set for %s. They're signed out everywhere else." % name
-                        elif action in ("disable", "enable"):
-                            if target["id"] == g.user["id"]:
-                                raise ValueError("You can't turn off your own account.")
-                            g.conn.execute("UPDATE users SET active = ? WHERE id = ?", (action == "enable", target["id"]))
-                            done = "%s is %s." % (name, "back on" if action == "enable" else "turned off and can't sign in")
-                        elif action == "role" and form.get("role") in db.ROLES:
-                            if target["id"] == g.user["id"] and form["role"] != "admin":
-                                raise ValueError("You can't take away your own admin role.")
-                            g.conn.execute("UPDATE users SET role = ? WHERE id = ?", (form["role"], target["id"]))
-                            done = "%s is now a %s." % (name, form["role"])
-                        else:
-                            raise ValueError("Pick an action.")
-                    db.log_event(g.conn, "user", name, "user_" + action, "web", g.user["id"],
-                                 data={"role": form.get("role")} if action in ("add", "role") else None)
+                    done, new_hash = change_user(g.conn, request.form, g.user, "web")
+                if new_hash:
+                    session["pw"] = _password_mark(new_hash)  # stay signed in here
                 flash(done, "ok")
             except ValueError as e:
                 flash(str(e), "error")
             return redirect(url_for("users"))
-        rows = g.conn.execute(
-            "SELECT u.*, (SELECT MAX(at) FROM events WHERE entity = 'user' AND entity_id = u.name AND action = 'signed_in') AS last_in,"
-            " (SELECT COUNT(*) FROM events WHERE user_id = u.id) AS changes"
-            " FROM users u ORDER BY u.active DESC, u.name").fetchall()
+        rows = g.conn.execute(USERS_SQL).fetchall()
         return render_template("users.html", rows=rows, roles=db.ROLES, is_admin=g.user["role"] == "admin")
 
     # --- activity and numbers ---
@@ -1319,22 +1366,7 @@ def _routes(app):
         action = request.args.get("action", "")
         q = request.args.get("q", "").strip().upper()
         page = max(request.args.get("page", 1, type=int), 1)
-        sql = ("SELECT e.*, u.name AS user FROM events e LEFT JOIN users u ON u.id = e.user_id WHERE 1 = 1")
-        params = []
-        if who == "(none)":
-            sql += " AND e.user_id IS NULL"
-        elif who:
-            sql += " AND u.name = ?"
-            params.append(who)
-        if action:
-            sql += " AND e.action = ?"
-            params.append(action)
-        if q:
-            sql += " AND e.entity_id = ?"
-            params.append(q)
-        sql += " ORDER BY e.id DESC LIMIT 101 OFFSET ?"
-        params.append((page - 1) * 100)
-        rows = g.conn.execute(sql, params).fetchall()
+        rows = activity_rows(g.conn, who, action, q, 101, (page - 1) * 100)
         users = [r["name"] for r in g.conn.execute("SELECT name FROM users ORDER BY name")]
         actions = [r["action"] for r in g.conn.execute("SELECT DISTINCT action FROM events ORDER BY action")]
         return render_template("activity.html", rows=rows[:100], more=len(rows) > 100, page=page, who=who,

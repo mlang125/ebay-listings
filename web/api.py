@@ -5,6 +5,7 @@ with a bearer token instead of the website's session cookie; browsers never send
 so the API needs no CSRF token.
 """
 
+import datetime
 import functools
 import hashlib
 import os
@@ -14,11 +15,11 @@ import secrets
 from flask import Blueprint, g, jsonify, request, send_from_directory, url_for
 from werkzeug.security import check_password_hash
 
-from ebay import api as ebay_api, capture, db, orders, trading
+from ebay import api as ebay_api, capture, db, orders, sales, trading
 
-from . import (ITEMS_SQL, ITEM_SORTS, MAX_FAILED_SIGN_INS, LOCKOUT_MINUTES, TOTE_SORTS, _float, _item_filters,
-               _parse_json, _password_mark, _sku, count_tote, edit_changes, item_action, order_by, ship,
-               sign_in_failures)
+from . import (ITEMS_SQL, ITEM_SORTS, LOCKOUT_MINUTES, MAX_FAILED_SIGN_INS, TOTE_SORTS, USERS_SQL, _float,
+               _item_filters, _parse_json, _password_mark, _sku, activity_rows, attention, change_user, count_tote,
+               data_checks, edit_changes, item_action, order_by, ship, sign_in_failures)
 
 blueprint = Blueprint("api", __name__, url_prefix="/api/v1")
 
@@ -478,6 +479,92 @@ def listings_quantities():
     except ValueError as e:
         return error(400, "%s Nothing was changed." % e)
     return jsonify({"changed": changed})
+
+
+# --- reports and people ---
+
+def _plain(value):
+    """Database rows and tuples as plain JSON values."""
+    if hasattr(value, "keys"):
+        return {k: _plain(value[k]) for k in value.keys()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(v) for v in value]
+    return value
+
+
+@blueprint.route("/home")
+@token_required
+def home():
+    """What the home page shows: the attention list, counts by status, what's due to ship, today's work.
+    Each attention entry names the list to open (`list`) and its filters, e.g. items with status MISSING."""
+    counts = dict(g.conn.execute("SELECT status, COUNT(*) FROM items GROUP BY status").fetchall())
+    to_ship = orders.pick_list(g.conn)
+    today = datetime.date.today().isoformat()
+    return jsonify({
+        "attention": [{"key": k, "count": n, "what": what, "list": ep, "filters": args}
+                      for k, n, what, (ep, args) in attention(g.conn)],
+        "counts": {st: counts[st] for st in db.STATUSES if counts.get(st)},
+        "to_ship": len(to_ship),
+        "overdue": [r["sku"] for r in to_ship if r["ship_by"] and r["ship_by"] < today],
+        "due_today": [r["sku"] for r in to_ship if r["ship_by"] == today],
+        "today": [{"label": label, "count": n} for n, label in sales.today_counts(g.conn)],
+        "last_sync": _last_sync(),
+    })
+
+
+@blueprint.route("/checks")
+@token_required
+def checks():
+    """Records that look wrong (each check with up to 100 items), and when the listing check last ran."""
+    found = data_checks(g.conn)
+    return jsonify({
+        "checks": [{"what": what, "why": why, "items": [{"sku": r[0], "title": r[1], "detail": r[2]} for r in rows]}
+                   for what, why, rows in found],
+        "last_listing_check": g.conn.execute(
+            "SELECT MAX(at) FROM events WHERE entity = 'listings' AND action = 'checked'").fetchone()[0],
+    })
+
+
+@blueprint.route("/sales")
+@token_required
+def sales_report():
+    return jsonify(_plain({"summary": sales.summary(g.conn), "months": sales.by_month(g.conn),
+                           "bands": sales.price_bands(g.conn), "active": sales.active(g.conn)}))
+
+
+@blueprint.route("/activity")
+@token_required
+def activity():
+    """Events, newest first: `who` (a name, or "(none)"), `action`, `q` (a SKU or tote code), limit/offset."""
+    limit, offset = _page()
+    rows = activity_rows(g.conn, request.args.get("who", ""), request.args.get("action", ""),
+                         request.args.get("q", "").strip().upper(), limit, offset)
+    return jsonify({"events": [{**dict(r), "data": _parse_json(r["data"])} for r in rows],
+                    "people": _plain(sales.by_user(g.conn))})
+
+
+@blueprint.route("/users")
+@token_required
+def users():
+    return jsonify({"users": [{"id": r["id"], "name": r["name"], "role": r["role"], "active": bool(r["active"]),
+                               "last_in": r["last_in"], "changes": r["changes"]} for r in g.conn.execute(USERS_SQL)],
+                    "roles": list(db.ROLES)})
+
+
+@blueprint.route("/users", methods=["POST"])
+@token_required
+def users_change():
+    """Admins only: {"action": "add" | "password" | "disable" | "enable" | "role", "name", "role", "password"}."""
+    if g.user["role"] != "admin":
+        return error(403, "Only admins can change people.")
+    try:
+        with g.conn:
+            done, own_hash = change_user(g.conn, _body(), g.user, "api")
+            if own_hash:  # keep this device signed in; every other sign-in ends
+                g.conn.execute("UPDATE api_tokens SET password_mark = ? WHERE id = ?", (_password_mark(own_hash), g.token_id))
+    except ValueError as e:
+        return error(400, str(e))
+    return jsonify({"done": done})
 
 
 # --- capture (the camera flow) ---

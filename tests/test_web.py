@@ -657,6 +657,35 @@ assert r.get_json() == {"changed": 1}, r.data
 assert api_c.post("/api/v1/listings/quantities", headers=H, json={"quantities": {listed[1]: -1}}).status_code == 400
 assert api_c.post("/api/v1/listings/quantities", headers=H, json={"quantities": {offebay: 1}}).status_code == 400
 
+# --- API: reports and people ---
+home = api_c.get("/api/v1/home", headers=H).get_json()
+assert home["counts"]["LISTED"] > 0 and "to_ship" in home and isinstance(home["today"], list)
+keys = {a["key"]: a for a in home["attention"]}
+assert keys["missing"]["list"] == "items" and keys["missing"]["filters"] == {"status": "MISSING"}, keys.get("missing")
+assert all(a["count"] > 0 for a in home["attention"])
+web_home = c.get("/").get_data(as_text=True)
+assert keys["missing"]["what"] in web_home, "the app and the website show the same list"
+ch = api_c.get("/api/v1/checks", headers=H).get_json()
+assert len(ch["checks"]) >= 8 and all({"what", "why", "items"} <= set(x) for x in ch["checks"]) and ch["last_listing_check"]
+sr = api_c.get("/api/v1/sales", headers=H).get_json()
+assert {"summary", "months", "bands", "active"} <= set(sr) and sr["months"]
+ac = api_c.get("/api/v1/activity?q=" + listed[2].lower() + "&limit=5", headers=H).get_json()
+assert ac["events"] and all(e["entity_id"] == listed[2] for e in ac["events"]) and len(ac["events"]) <= 5
+assert any(e["action"] == "moved" and e["user"] == "matt" and isinstance(e["data"], dict) for e in ac["events"])
+us = api_c.get("/api/v1/users", headers=H).get_json()
+assert "matt" in [u["name"] for u in us["users"]] and "password_hash" not in json.dumps(us)
+r = api_c.post("/api/v1/users", headers=H, json={"action": "add", "name": "appworker", "role": "shipper", "password": "longenough1"})
+assert r.get_json() == {"done": "Added appworker (shipper)."}, r.data
+wk = {"Authorization": "Bearer " + api_c.post("/api/v1/auth/token", json={"name": "appworker", "password": "longenough1"}).get_json()["token"]}
+assert api_c.post("/api/v1/users", headers=wk, json={"action": "disable", "name": "matt"}).status_code == 403
+assert api_c.post("/api/v1/users", headers=H, json={"action": "disable", "name": "matt"}).status_code == 400, "not yourself"
+assert api_c.post("/api/v1/users", headers=H, json={"action": "disable", "name": "appworker"}).status_code == 200
+assert api_c.get("/api/v1/me", headers=wk).status_code == 401, "a turned-off account's app sign-in stops"
+r = api_c.post("/api/v1/users", headers=H, json={"action": "password", "name": "matt", "password": "testpass123"})
+assert r.status_code == 200 and api_c.get("/api/v1/me", headers=H).status_code == 200, "changing your own password keeps this device signed in"
+assert c.get("/").status_code == 302, "but the website sign-in ends"
+c, tok = sign_in("matt", "testpass123")
+
 # --- API: the camera flow (a tote shot item by item) ---
 r = api_c.post("/api/v1/batches", headers=H, json={"tote": "Q9"})
 assert r.status_code == 201, r.data
