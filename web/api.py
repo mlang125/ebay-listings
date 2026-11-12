@@ -14,10 +14,11 @@ import secrets
 from flask import Blueprint, g, jsonify, request, send_from_directory, url_for
 from werkzeug.security import check_password_hash
 
-from ebay import capture, db
+from ebay import api as ebay_api, capture, db, orders, trading
 
 from . import (ITEMS_SQL, ITEM_SORTS, MAX_FAILED_SIGN_INS, LOCKOUT_MINUTES, TOTE_SORTS, _float, _item_filters,
-               _parse_json, _password_mark, _sku, edit_changes, item_action, order_by, sign_in_failures)
+               _parse_json, _password_mark, _sku, count_tote, edit_changes, item_action, order_by, ship,
+               sign_in_failures)
 
 blueprint = Blueprint("api", __name__, url_prefix="/api/v1")
 
@@ -306,6 +307,177 @@ def items_bulk():
     skus = list(dict.fromkeys(_sku(str(s)) for s in skus))
     done, err = _act(skus, str(body.get("action") or ""), body)
     return err or jsonify({"done": done, "skus": skus})
+
+
+# --- totes ---
+
+def _code(code):
+    try:
+        return db.check_code(code), None
+    except ValueError as e:
+        return None, error(404 if code else 400, str(e))
+
+
+def _sku_list(value):
+    if not isinstance(value, list) or not all(isinstance(s, (str, int)) for s in value):
+        raise ValueError("Send SKUs as a list.")
+    return [_sku(str(s)) for s in value]
+
+
+@blueprint.route("/totes/<code>/count", methods=["POST"])
+@token_required
+def tote_count(code):
+    """{"here": [SKUs found], "extra": [SKUs found here that we had somewhere else]}. Items on hand
+    that aren't in `here` become missing; the tote is recorded as checked."""
+    code, err = _code(code)
+    if err:
+        return err
+    body = _body()
+    try:
+        here, extra = _sku_list(body.get("here", [])), _sku_list(body.get("extra", []))
+        with g.conn:
+            result = count_tote(g.conn, code, here, extra, "api", g.user["id"])
+    except ValueError as e:
+        return error(400, str(e).rstrip(".") + ". Nothing was changed.")
+    return jsonify(result)
+
+
+@blueprint.route("/totes/<code>/checked", methods=["POST"])
+@token_required
+def tote_checked(code):
+    code, err = _code(code)
+    if err:
+        return err
+    with g.conn:
+        db.mark_checked(g.conn, code, "api", g.user["id"])
+    return "", 204
+
+
+@blueprint.route("/totes/consolidate", methods=["POST"])
+@token_required
+def totes_consolidate():
+    """{"codes": ["B4", "C6"], "into": "B4"} (no `into` = the next free tote). Into a tote that has
+    items in it only when it's one of `codes`, so nobody adds to a full tote by mistake."""
+    body = _body()
+    try:
+        codes = list(dict.fromkeys(db.check_code(str(c)) for c in body.get("codes") or []))
+        if len(codes) < 2:
+            raise ValueError("List at least two totes to combine.")
+        into = db.check_code(body["into"]) if body.get("into") else db.suggest_tote(g.conn, freeing=codes)
+        if into not in codes and into in db.totes_in_use(g.conn):
+            raise ValueError("%s already has items in it; list it with the others to add to it." % into)
+        with g.conn:
+            moved = db.consolidate(g.conn, codes, into, "api", g.user["id"])
+    except ValueError as e:
+        return error(400, str(e))
+    return jsonify({"into": into, "moved": moved})
+
+
+@blueprint.route("/totes/<code>/split", methods=["POST"])
+@token_required
+def tote_split(code):
+    """{"plan": {"MV-00012": "C3", "MV-00015": "D1"}}: send items from this tote to others."""
+    code, err = _code(code)
+    if err:
+        return err
+    plan = _body().get("plan")
+    if not isinstance(plan, dict) or not plan:
+        return error(400, "Send a plan: which SKU goes to which tote.")
+    try:
+        plan = {_sku(str(k)): db.check_code(str(v)) for k, v in plan.items()}
+        with g.conn:
+            db.split(g.conn, code, {k: v for k, v in plan.items() if v != code}, "api", g.user["id"])
+    except ValueError as e:
+        return error(400, str(e))
+    return jsonify({"moved": sum(1 for v in plan.values() if v != code)})
+
+
+# --- shipping ---
+
+@blueprint.route("/picklist")
+@token_required
+def picklist():
+    """Sold items waiting to ship, in tote order; `?days=0` for only those due today, 1 for tomorrow too."""
+    days = request.args.get("days", "")
+    rows = orders.pick_list(g.conn, int(days) if days.isdigit() else None)
+    return jsonify({"items": [dict(r) for r in rows], "total": len(rows), "last_sync": _last_sync()})
+
+
+@blueprint.route("/pack", methods=["POST"])
+@token_required
+def pack():
+    """{"skus": [...] (or "sku"), "step": "LABEL_PRINTED" | "PACKAGED" | "SENT_TO_POST_OFFICE" | "BOUGHT",
+    "box": "..."}. Only items waiting to ship change; the rest come back in `skipped`."""
+    body = _body()
+    try:
+        skus = _sku_list(body["skus"]) if "skus" in body else [_sku(str(body.get("sku") or ""))]
+        box = str(body.get("box") or "").strip()[:40] if body.get("step") == "PACKAGED" else None
+        with g.conn:
+            changed, skipped = ship(g.conn, skus, str(body.get("step") or ""), "api", g.user["id"], box=box or None)
+    except ValueError as e:
+        return error(400, str(e).rstrip(".") + ".")
+    return jsonify({"changed": changed, "skipped": skipped})
+
+
+def _last_sync():
+    return g.conn.execute("SELECT MAX(at) FROM events WHERE actor = 'sync'").fetchone()[0]
+
+
+# --- eBay (read only: these fetch from eBay and change only our records) ---
+
+@blueprint.route("/sync/orders", methods=["POST"])
+@token_required
+def sync_orders():
+    """Fetch new orders from eBay. New sales lower an item's units left; at 0 it's BOUGHT."""
+    try:
+        counts = orders.sync(g.conn, user=g.user["id"])
+    except (ebay_api.EbayError, SystemExit) as e:
+        return error(502, "Couldn't get orders from eBay: %s" % e, "ebay_error")
+    return jsonify({"orders": counts["orders"], "new_sales": counts["new_lines"], "changes": [
+        {"sku": sku, "from": before, "to": after, "title": title} for sku, before, after, title in counts["changes"]]})
+
+
+@blueprint.route("/sync/listings", methods=["POST"])
+@token_required
+def sync_listings():
+    """Compare our LISTED items with eBay's live listings. Changes nothing: to act on it, end items
+    with /items/bulk (status ENDED) and fix units left with /listings/quantities."""
+    try:
+        active = trading.active_listings()
+    except (ebay_api.EbayError, SystemExit) as e:
+        return error(502, "Couldn't get listings from eBay: %s" % e, "ebay_error")
+    d = trading.compare(g.conn, active)
+    with g.conn:
+        db.log_event(g.conn, "listings", "check", "checked", "api", g.user["id"], data={
+            "live": d["live"], "not_live": len(d["not_live"]), "unknown": len(d["unknown"]), "quantity": len(d["quantity"])})
+    if not d["live"] and d["listed"]:
+        return error(502, "eBay returned no live listings at all, which can't be right. Try again later.", "ebay_error")
+    return jsonify({"live": d["live"], "listed": d["listed"], "not_live": [dict(r) for r in d["not_live"]],
+                    "unknown": [dict(a) for a in d["unknown"]],
+                    "quantity": [{**dict(r), "ebay_quantity": q} for r, q in d["quantity"]]})
+
+
+@blueprint.route("/listings/quantities", methods=["POST"])
+@token_required
+def listings_quantities():
+    """{"quantities": {"MV-00123": 2}}: take eBay's units left for listed items. Our records only; all or nothing."""
+    quantities = _body().get("quantities")
+    if not isinstance(quantities, dict) or not quantities:
+        return error(400, "Send quantities: units left per SKU.")
+    changed = 0
+    try:
+        with g.conn:
+            for sku, qty in quantities.items():
+                sku = _sku(str(sku))
+                if not isinstance(qty, int) or isinstance(qty, bool) or qty < 0:
+                    raise ValueError("Units left for %s must be a whole number." % sku)
+                row = g.conn.execute("SELECT status FROM items WHERE sku = ?", (sku,)).fetchone()
+                if row is None or row["status"] != "LISTED":
+                    raise ValueError("%s isn't listed." % sku)
+                changed += db.set_quantity(g.conn, sku, qty, "api", g.user["id"], note="eBay's count (listing check)")
+    except ValueError as e:
+        return error(400, "%s Nothing was changed." % e)
+    return jsonify({"changed": changed})
 
 
 # --- capture (the camera flow) ---

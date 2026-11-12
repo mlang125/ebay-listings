@@ -207,6 +207,54 @@ def item_action(conn, skus, action, args, actor, user):
     raise ValueError("Pick an action")
 
 
+def count_tote(conn, code, here, extra, actor, user):
+    """Record going through a tote: items on hand that aren't in `here` become missing, ticked ones are
+    found, `extra` SKUs (seen there but recorded elsewhere) move in, and the tote is marked checked.
+    Raises ValueError, before changing anything, for an unknown SKU. Returns counts and a message."""
+    here, extra = set(here), list(dict.fromkeys(extra))
+    unknown = [s for s in extra if not conn.execute("SELECT 1 FROM items WHERE sku = ?", (s,)).fetchone()]
+    if unknown:
+        raise ValueError("Unknown SKU: %s" % ", ".join(unknown))
+    listed = db.on_hand(conn, code)
+    was_missing = {r[0] for r in conn.execute(
+        "SELECT sku FROM items WHERE missing_since IS NOT NULL AND sku IN (%s)" % ",".join("?" * len(listed)),
+        listed)} if listed else set()
+    for sku in listed:
+        db.set_missing(conn, sku, sku not in here, actor, user, note="tote count")
+    moved = [s for s in extra if s not in listed]
+    for sku in moved:
+        db.move(conn, sku, code, actor, user)
+        db.set_missing(conn, sku, False, actor, user, note="tote count")
+    db.mark_checked(conn, code, actor, user)
+    missing = [s for s in listed if s not in here]
+    new_missing = [s for s in missing if s not in was_missing]
+    found = [s for s in listed if s in here and s in was_missing]
+    parts = ["%d here" % (len(listed) - len(missing))]
+    if missing:
+        parts.append("%d missing%s" % (len(missing), " (%d new)" % len(new_missing) if len(new_missing) < len(missing) else ""))
+    if found:
+        parts.append("%d found again" % len(found))
+    if moved:
+        parts.append("%d moved in" % len(moved))
+    return {"here": len(listed) - len(missing), "missing": missing, "new_missing": new_missing, "found": found,
+            "moved_in": moved, "message": "%s counted: %s." % (code, ", ".join(parts))}
+
+
+SHIP_STEPS = ("BOUGHT", "LABEL_PRINTED", "PACKAGED", "SENT_TO_POST_OFFICE")
+
+
+def ship(conn, skus, step, actor, user, box=None):
+    """Move sold items to a shipping step. Only items still waiting to ship change (and not ones
+    already at that step). Returns (changed, skipped)."""
+    if step not in SHIP_STEPS:
+        raise ValueError("Pick a shipping step")
+    waiting = {r["sku"]: r["status"] for r in orders.pick_list(conn)}
+    changed = [s for s in dict.fromkeys(skus) if s in waiting and waiting[s] != step]
+    for sku in changed:
+        db.set_status(conn, sku, step, actor, user, data={"package": box} if box else None)
+    return changed, [s for s in dict.fromkeys(skus) if s not in changed]
+
+
 def _apply_form(item, form):
     """Copy the editor's fields into the draft. Returns the names of fields that changed."""
     new = {
@@ -1093,35 +1141,14 @@ def _routes(app):
         except ValueError:
             abort(404)
         if request.method == "POST":
-            here = set(request.form.getlist("here"))
             extra = [_sku(s) for s in re.split(r"[\s,]+", request.form.get("extra", "")) if s.strip()]
-            unknown = [s for s in extra if not g.conn.execute("SELECT 1 FROM items WHERE sku = ?", (s,)).fetchone()]
-            if unknown:
-                flash("Unknown SKU: %s. Nothing was changed." % ", ".join(unknown), "error")
+            try:
+                with g.conn:
+                    result = count_tote(g.conn, code, request.form.getlist("here"), extra, "web", g.user["id"])
+            except ValueError as e:
+                flash("%s. Nothing was changed." % e, "error")
                 return redirect(url_for("tote_count", code=code))
-            with g.conn:
-                listed = db.on_hand(g.conn, code)
-                was_missing = {r[0] for r in g.conn.execute(
-                    "SELECT sku FROM items WHERE missing_since IS NOT NULL AND sku IN (%s)" % ",".join("?" * len(listed)),
-                    listed)} if listed else set()
-                for sku in listed:
-                    db.set_missing(g.conn, sku, sku not in here, "web", g.user["id"], note="tote count")
-                moved = [s for s in extra if s not in listed]
-                for sku in moved:
-                    db.move(g.conn, sku, code, "web", g.user["id"])
-                    db.set_missing(g.conn, sku, False, "web", g.user["id"], note="tote count")
-                db.mark_checked(g.conn, code, "web", g.user["id"])
-            missing = [s for s in listed if s not in here]
-            parts = ["%d here" % (len(listed) - len(missing))]
-            if missing:
-                new = len([s for s in missing if s not in was_missing])
-                parts.append("%d missing%s" % (len(missing), " (%d new)" % new if new < len(missing) else ""))
-            found = [s for s in listed if s in here and s in was_missing]
-            if found:
-                parts.append("%d found again" % len(found))
-            if moved:
-                parts.append("%d moved in" % len(moved))
-            flash("%s counted: %s." % (code, ", ".join(parts)), "ok")
+            flash(result["message"], "ok")
             return redirect(url_for("tote", code=code))
         rows = g.conn.execute(ITEMS_SQL + " WHERE l.code = ? AND i.status NOT IN (?, ?) ORDER BY i.sku",
                               (code, *db.GONE)).fetchall()
@@ -1164,15 +1191,12 @@ def _routes(app):
         if not skus:
             flash("Tick the items first.", "error")
             return redirect(url_for("picklist", days=request.form.get("days", "")))
-        waiting = {r["sku"] for r in orders.pick_list(g.conn)}
-        changed = [s for s in skus if s in waiting]
         with g.conn:
-            for sku in changed:
-                db.set_status(g.conn, sku, status, "web", g.user["id"])
+            changed, _ = ship(g.conn, skus, status, "web", g.user["id"])
         label = status.replace("_", " ").lower()
         if len(skus) > 1 or len(changed) < len(skus):
             flash("%d marked %s." % (len(changed), label) + (
-                " %d skipped (not waiting to ship)." % (len(skus) - len(changed)) if len(changed) < len(skus) else ""), "ok")
+                " %d skipped (already there, or not waiting to ship)." % (len(skus) - len(changed)) if len(changed) < len(skus) else ""), "ok")
         return redirect(url_for("picklist", days=request.form.get("days", "")))
 
     @app.route("/listings/check", methods=["POST"])

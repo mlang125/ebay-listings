@@ -623,6 +623,40 @@ assert tuple(ev) == ("api", 1), "API changes are recorded with who made them"
 cdb.close()
 assert api_c.post(I + "bulk", headers=H, json={"skus": "MV-1", "action": "move"}).status_code == 400
 
+# --- API: totes, shipping, eBay reads ---
+r = api_c.post("/api/v1/totes/q8/count", headers=H, json={"here": [listed[0], listed[1]], "extra": [offebay], })
+assert r.status_code == 200, r.data
+r = r.get_json(); assert r["missing"] == [listed[2]] and r["moved_in"] == [offebay] and "Q8 counted" in r["message"]
+assert api_c.post("/api/v1/totes/Q8/count", headers=H, json={"here": [], "extra": ["MV-99999"]}).status_code == 400
+assert api_c.post("/api/v1/totes/Q8/count", headers=H, json={"here": "x"}).status_code == 400
+assert api_c.post("/api/v1/totes/Q8/checked", headers=H).status_code == 204
+assert api_c.post("/api/v1/totes/nope!/checked", headers=H).status_code == 404
+assert api_c.post("/api/v1/totes/consolidate", headers=H, json={"codes": ["Q8", "Q6"], "into": T}).status_code == 400, \
+    "won't pour into a tote that already has things in it"
+r = api_c.post("/api/v1/totes/consolidate", headers=H, json={"codes": ["Q8", "Q7"], "into": "Q7"}).get_json()
+assert r["into"] == "Q7" and r["moved"] >= 3, r
+assert api_c.post("/api/v1/totes/Q7/split", headers=H, json={"plan": {"MV-99999": "Q6"}}).status_code == 400
+assert api_c.post("/api/v1/totes/Q7/split", headers=H, json={"plan": {listed[0]: "Q6"}}).get_json()["moved"] == 1
+pl = api_c.get("/api/v1/picklist", headers=H).get_json()
+assert pl["total"] == len(pl["items"]) and "last_sync" in pl
+if pl["items"]:
+    ps = pl["items"][0]["sku"]; was = pl["items"][0]["status"]
+    r = api_c.post("/api/v1/pack", headers=H, json={"skus": [ps, listed[1]], "step": "PACKAGED", "box": "Box 1"}).get_json()
+    assert r["changed"] == ([ps] if was != "PACKAGED" else []) and listed[1] in r["skipped"], r
+    assert api_c.post("/api/v1/pack", headers=H, json={"sku": ps, "step": was}).status_code == 200  # put it back
+assert api_c.post("/api/v1/pack", headers=H, json={"sku": listed[1], "step": "DELIVERED"}).status_code == 400
+assert api_c.post("/api/v1/sync/orders", headers=H).get_json()["orders"] == 0, "eBay faked: no orders"
+assert api_c.post("/api/v1/sync/listings", headers=H).get_json()["error"]["code"] == "ebay_error"
+trading.active_listings = lambda: fake_live
+r = api_c.post("/api/v1/sync/listings", headers=H).get_json()
+assert r["live"] == len(fake_live) and isinstance(r["not_live"], list) and isinstance(r["quantity"], list)
+trading.active_listings = broken
+cdb = db.connect(S + "/ebay.db"); q1 = cdb.execute("SELECT quantity FROM items WHERE sku = ?", (listed[1],)).fetchone()[0] or 0; cdb.close()
+r = api_c.post("/api/v1/listings/quantities", headers=H, json={"quantities": {listed[1]: q1 + 1}})
+assert r.get_json() == {"changed": 1}, r.data
+assert api_c.post("/api/v1/listings/quantities", headers=H, json={"quantities": {listed[1]: -1}}).status_code == 400
+assert api_c.post("/api/v1/listings/quantities", headers=H, json={"quantities": {offebay: 1}}).status_code == 400
+
 # --- API: the camera flow (a tote shot item by item) ---
 r = api_c.post("/api/v1/batches", headers=H, json={"tote": "Q9"})
 assert r.status_code == 201, r.data

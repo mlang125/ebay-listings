@@ -55,17 +55,20 @@ app should show its sign-in screen. Failed sign-ins count toward the same lockou
 | POST | /items/{sku}/price-applied | `{"price": 12.99}` The price was changed on eBay; clears the suggestion |
 | POST | /items/{sku}/relisted-as | `{"sku": "MV-00852"}` This cancelled, returned or ended item was listed again |
 | POST | /items/bulk | `{"skus": [...], "action": "move"/"missing"/"found"/"status"/"drop", ...}` with `tote`, `status`, `note` or `percent` (drop = suggest a lower price). All or nothing -> `{"done", "skus"}` |
-| POST | /totes/{code}/count | *planned* `{"here": [...], "extra": [...]}` |
-| POST | /totes/consolidate, /totes/{code}/split | *planned* |
+| POST | /totes/{code}/count | `{"here": [SKUs found], "extra": [SKUs found here but recorded elsewhere]}`. On-hand items not in `here` become missing, extras move in, the tote is marked checked -> `{"here", "missing", "new_missing", "found", "moved_in", "message"}` |
+| POST | /totes/{code}/checked | Record that someone went through the tote -> 204 |
+| POST | /totes/consolidate | `{"codes": ["B4", "C6"], "into": "B4"}` (no `into` = next free tote). Refuses a tote that has items unless it's listed -> `{"into", "moved"}` |
+| POST | /totes/{code}/split | `{"plan": {"MV-00012": "C3"}}` Send items from this tote to others |
 
 ## Shipping and eBay
 
 | Method | Path | What |
 |---|---|---|
-| GET | /picklist | *planned* Sold, unshipped items by tote |
-| POST | /pack | *planned* `{"sku": "...", "step": "PACKAGED", "box": "..."}` |
-| POST | /sync/orders | *planned* Fetch new orders from eBay (read only) |
-| POST | /sync/listings | *planned* Compare live eBay listings (read only); returns the differences |
+| GET | /picklist | Sold items waiting to ship, in tote order (`?days=0` = due today) -> `{"items", "total", "last_sync"}` |
+| POST | /pack | `{"skus": [...] or "sku", "step": "LABEL_PRINTED"/"PACKAGED"/"SENT_TO_POST_OFFICE"/"BOUGHT", "box": "..."}` Only items waiting to ship change -> `{"changed", "skipped"}` |
+| POST | /sync/orders | Fetch new orders from eBay (read only) -> `{"orders", "new_sales", "changes": [{"sku", "from", "to", "title"}]}` |
+| POST | /sync/listings | Compare live eBay listings (read only) -> `{"live", "listed", "not_live", "unknown", "quantity"}`. Changes nothing; end items with /items/bulk |
+| POST | /listings/quantities | `{"quantities": {"MV-00123": 2}}` Take eBay's units left for listed items, all or nothing |
 
 ## Capture (the camera flow)
 
