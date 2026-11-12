@@ -71,6 +71,13 @@ struct CaptureHomeView: View {
             nextFree = try await totes.nextFree
             batches = try await list.batches
         }
+        #if DEBUG
+        let open = UserDefaults.standard.integer(forKey: "debugShoot")  // -debugShoot <batch id>
+        if open > 0, shooting == nil, let b = batches.first(where: { $0.id == open }) {
+            UserDefaults.standard.removeObject(forKey: "debugShoot")
+            shooting = b
+        }
+        #endif
     }
 
     func start() async {

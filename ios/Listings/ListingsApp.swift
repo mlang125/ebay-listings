@@ -22,6 +22,10 @@ final class Session: ObservableObject {
 
     func restore() async {
         defer { checking = false }
+        #if DEBUG
+        // Simulator checks: launch with -debugToken <token> -server <url> to start signed in.
+        if let t = UserDefaults.standard.string(forKey: "debugToken") { API.shared.token = t }
+        #endif
         guard API.shared.token != nil else { return }
         do { user = try await API.shared.get("/me", as: MeReply.self).user } catch let e as APIError where e.signedOut { signOut(local: true) } catch {}
     }
@@ -91,13 +95,14 @@ struct SignInView: View {
 }
 
 struct RootView: View {
+    @AppStorage("tab") private var tab = "shoot"  // reopens where you were
     var body: some View {
-        TabView {
-            CaptureHomeView().tabItem { Label("Shoot", systemImage: "camera") }
-            HomeView().tabItem { Label("Home", systemImage: "house") }
-            ItemsView().tabItem { Label("Items", systemImage: "list.bullet") }
-            TotesView().tabItem { Label("Totes", systemImage: "shippingbox") }
-            ShipView().tabItem { Label("Ship", systemImage: "paperplane") }
+        TabView(selection: $tab) {
+            CaptureHomeView().tabItem { Label("Shoot", systemImage: "camera") }.tag("shoot")
+            HomeView().tabItem { Label("Home", systemImage: "house") }.tag("home")
+            ItemsView().tabItem { Label("Items", systemImage: "list.bullet") }.tag("items")
+            TotesView().tabItem { Label("Totes", systemImage: "shippingbox") }.tag("totes")
+            ShipView().tabItem { Label("Ship", systemImage: "paperplane") }.tag("ship")
         }
     }
 }
