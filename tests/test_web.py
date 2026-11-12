@@ -587,6 +587,42 @@ check(c.post("/users", data={"csrf": tok, "action": "password", "name": "apiuser
 assert api_c.get("/api/v1/me", headers={"Authorization": "Bearer " + au_tok}).status_code == 401, "a new password ends app sign-ins"
 H = {"Authorization": "Bearer " + api_c.post("/api/v1/auth/token", json={"name": "matt", "password": "testpass123"}).get_json()["token"]}
 
+# --- API: changing items (same code as the website's forms) ---
+cdb = db.connect(S + "/ebay.db")
+listed = [r[0] for r in cdb.execute("SELECT sku FROM items WHERE status = 'LISTED' AND price > 5 AND missing_since IS NULL ORDER BY sku LIMIT 3")]
+offebay = cdb.execute("SELECT sku FROM items WHERE status IN (%s) ORDER BY sku LIMIT 1" % ",".join("?" * len(db.OFF_EBAY)), db.OFF_EBAY).fetchone()[0]
+cdb.close()
+I = "/api/v1/items/"
+r = api_c.post(I + listed[0] + "/move", headers=H, json={"tote": "q8"}); assert r.status_code == 200, r.data
+assert r.get_json()["item"]["tote"] == "Q8" and r.get_json()["done"] == "Moved 1 item to Q8."
+assert api_c.post(I + listed[0] + "/move", headers=H, json={"tote": "??"}).get_json()["error"]["code"] == "bad_request"
+assert api_c.post(I + "MV-99999/move", headers=H, json={"tote": "Q8"}).status_code == 404
+assert api_c.post(I + listed[0] + "/explode", headers=H).status_code == 404
+r = api_c.post(I + listed[0] + "/missing", headers=H, json={"missing": True, "note": "not in Q8"}).get_json()
+assert r["item"]["missing_since"]
+assert not api_c.post(I + listed[0] + "/missing", headers=H, json={"missing": False}).get_json()["item"]["missing_since"]
+r = api_c.patch(I + listed[0], headers=H, json={"notes": "scuff on lid", "cost": "$2.50"}).get_json()
+assert r["changed"] == ["cost", "notes"] and r["item"]["cost"] == 2.5
+assert api_c.patch(I + listed[0], headers=H, json={"price": 1}).status_code == 400, "live items' prices follow eBay"
+assert api_c.patch(I + listed[0], headers=H, json={"cost": "abc"}).status_code == 400
+r = api_c.patch(I + offebay, headers=H, json={"title": "Corrected title"}).get_json()
+assert r["changed"] == ["title"] and r["item"]["title"] == "Corrected title"
+assert api_c.post(I + listed[1] + "/price-suggestion", headers=H, json={"price": 4.99}).status_code == 201
+assert api_c.post(I + listed[1] + "/price-suggestion", headers=H, json={"price": 0}).status_code == 400
+assert api_c.post(I + listed[1] + "/price-applied", headers=H, json={"price": 4.99}).get_json()["item"]["price"] == 4.99
+r = api_c.post(I + "bulk", headers=H, json={"skus": [listed[1], listed[2].lower(), "MV-99999"], "action": "move", "tote": "Q8"})
+assert r.status_code == 400 and "MV-99999" in r.get_json()["error"]["message"]
+cdb = db.connect(S + "/ebay.db")
+assert cdb.execute("SELECT l.code FROM items i JOIN locations l ON l.id = i.location_id WHERE sku = ?", (listed[1],)).fetchone()[0] != "Q8", "all or nothing"
+r = api_c.post(I + "bulk", headers=H, json={"skus": [listed[1], listed[2]], "action": "drop", "percent": 15}).get_json()
+assert r["done"].startswith("Suggested a 15% lower price for 2 items")
+r = api_c.post(I + "bulk", headers=H, json={"skus": [listed[1], listed[2]], "action": "move", "tote": "Q8"}).get_json()
+assert r["done"] == "Moved 2 items to Q8."
+ev = cdb.execute("SELECT actor, user_id FROM events WHERE entity_id = ? AND action = 'moved' ORDER BY id DESC LIMIT 1", (listed[2],)).fetchone()
+assert tuple(ev) == ("api", 1), "API changes are recorded with who made them"
+cdb.close()
+assert api_c.post(I + "bulk", headers=H, json={"skus": "MV-1", "action": "move"}).status_code == 400
+
 # --- API: the camera flow (a tote shot item by item) ---
 r = api_c.post("/api/v1/batches", headers=H, json={"tote": "Q9"})
 assert r.status_code == 201, r.data

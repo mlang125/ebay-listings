@@ -142,6 +142,71 @@ def _float(value):
         return None
 
 
+def edit_changes(fields):
+    """Validated changes to our records from a form or JSON body, for db.edit_item. Only the fields
+    present are changed; an empty cost or price means unknown. Raises ValueError with a message."""
+    changes = {}
+    for key in ("notes", "cost_note"):
+        if key in fields:
+            changes[key] = str(fields.get(key) or "").strip() or None
+    for key in ("cost", "price"):
+        if key in fields:
+            raw = fields.get(key)
+            text = "" if raw is None else str(raw).strip().lstrip("$")
+            value = _float(text)
+            if text and value is None:
+                raise ValueError("%s must be a number." % key.capitalize())
+            changes[key] = round(value, 2) if value is not None else None
+    if "title" in fields:
+        changes["title"] = str(fields.get("title") or "").strip()
+        if not changes["title"] or len(changes["title"]) > TITLE_MAX:
+            raise ValueError("The title must be 1 to %d characters." % TITLE_MAX)
+    return changes
+
+
+def item_action(conn, skus, action, args, actor, user):
+    """One action on every SKU: move (args tote), missing, found, status (args status, note) or drop
+    (args percent: record a lower price suggestion). Used by the website and the API. Raises ValueError
+    before or during the changes, so the caller's transaction leaves nothing half done. Returns what happened."""
+    if not skus:
+        raise ValueError("Pick at least one item")
+    unknown = [s for s in skus if not conn.execute("SELECT 1 FROM items WHERE sku = ?", (s,)).fetchone()]
+    if unknown:
+        raise ValueError("Unknown SKU: %s" % ", ".join(unknown))
+    n, many = len(skus), "items" if len(skus) > 1 else "item"
+    if action == "move":
+        code = db.check_code(args.get("tote"))
+        for sku in skus:
+            db.move(conn, sku, code, actor, user)
+        return "Moved %d %s to %s." % (n, many, code)
+    if action in ("missing", "found"):
+        for sku in skus:
+            db.set_missing(conn, sku, action == "missing", actor, user, note=(args.get("note") or "").strip() or None)
+        return "Marked %d %s %s." % (n, many, action)
+    if action == "status":
+        status = args.get("status", "")
+        if status not in db.STATUSES:
+            raise ValueError("Pick a status")
+        note = (args.get("note") or "").strip() or None
+        data = {"note": note, "manual": True, **({"bulk": n} if n > 1 else {})}
+        for sku in skus:
+            db.set_status(conn, sku, status, actor, user, data=data)
+        return "Set %d %s to %s." % (n, many, status)
+    if action == "drop":
+        percent = _float(args.get("percent"))
+        if percent is None or not 0 < percent < 90:
+            raise ValueError("Enter a price drop between 1 and 89 percent")
+        rows = conn.execute("SELECT sku, status, price FROM items WHERE sku IN (%s)" % ",".join("?" * n), skus).fetchall()
+        not_listed = [r["sku"] for r in rows if r["status"] != "LISTED" or not r["price"]]
+        if not_listed:
+            raise ValueError("Only listed items with a price can get a price suggestion: %s" % ", ".join(not_listed))
+        for r in rows:
+            db.suggest_price(conn, r["sku"], db.price_drop(r["price"], percent), actor, user, note="%g%% drop" % percent)
+        return ("Suggested a %g%% lower price for %d %s. Change them on eBay, then press Applied on each."
+                % (percent, n, many))
+    raise ValueError("Pick an action")
+
+
 def _apply_form(item, form):
     """Copy the editor's fields into the draft. Returns the names of fields that changed."""
     new = {
@@ -802,21 +867,11 @@ def _routes(app):
     @login_required
     def item_edit(sku):
         """Correct our records: notes and cost always; title and price only when it's not live on eBay."""
-        form = request.form
-        changes = {"notes": form.get("notes", "").strip() or None, "cost_note": form.get("cost_note", "").strip() or None}
-        for key in ("cost", "price"):
-            if key in form:
-                text = form[key].strip().lstrip("$")
-                value = _float(text)
-                if text and value is None:
-                    flash("%s must be a number." % key.capitalize(), "error")
-                    return redirect(url_for("item", sku=sku))
-                changes[key] = round(value, 2) if value is not None else None  # empty cost = unknown
-        if "title" in form:
-            changes["title"] = form["title"].strip()
-            if not changes["title"] or len(changes["title"]) > TITLE_MAX:
-                flash("The title must be 1 to %d characters." % TITLE_MAX, "error")
-                return redirect(url_for("item", sku=sku))
+        try:
+            changes = edit_changes(request.form)
+        except ValueError as e:
+            flash(str(e), "error")
+            return redirect(url_for("item", sku=sku))
         try:
             with g.conn:
                 changed = db.edit_item(g.conn, sku, changes, "web", g.user["id"])
@@ -865,40 +920,7 @@ def _routes(app):
         user = g.user["id"]
         try:
             with g.conn:
-                unknown = [s for s in skus if not g.conn.execute("SELECT 1 FROM items WHERE sku = ?", (s,)).fetchone()]
-                if unknown:
-                    raise ValueError("Unknown SKU: %s" % ", ".join(unknown))
-                if action == "move":
-                    code = db.check_code(request.form.get("tote"))
-                    for sku in skus:
-                        db.move(g.conn, sku, code, "web", user)
-                    done = "Moved %d items to %s." % (len(skus), code)
-                elif action in ("missing", "found"):
-                    for sku in skus:
-                        db.set_missing(g.conn, sku, action == "missing", "web", user)
-                    done = "Marked %d items %s." % (len(skus), action)
-                elif action == "status":
-                    status = request.form.get("status", "")
-                    if status not in db.STATUSES:
-                        raise ValueError("Pick a status.")
-                    note = request.form.get("note", "").strip() or None
-                    for sku in skus:
-                        db.set_status(g.conn, sku, status, "web", user, data={"note": note, "manual": True, "bulk": len(skus)})
-                    done = "Set %d items to %s." % (len(skus), status)
-                elif action == "drop":
-                    percent = _float(request.form.get("percent"))
-                    if percent is None or not 0 < percent < 90:
-                        raise ValueError("Enter a price drop between 1 and 89 percent.")
-                    rows = g.conn.execute("SELECT sku, status, price FROM items WHERE sku IN (%s)" % ",".join("?" * len(skus)), skus).fetchall()
-                    not_listed = [r["sku"] for r in rows if r["status"] != "LISTED" or not r["price"]]
-                    if not_listed:
-                        raise ValueError("Only listed items with a price can get a price suggestion: %s" % ", ".join(not_listed))
-                    for r in rows:
-                        db.suggest_price(g.conn, r["sku"], db.price_drop(r["price"], percent), "web", user,
-                                         note="%g%% drop" % percent)
-                    done = "Suggested a %g%% lower price for %d items. Change them on eBay, then press Applied on each." % (percent, len(rows))
-                else:
-                    raise ValueError("Pick an action.")
+                done = item_action(g.conn, skus, action, request.form, "web", user)
             flash(done, "ok")
         except ValueError as e:
             flash("%s. Nothing was changed." % str(e).rstrip("."), "error")

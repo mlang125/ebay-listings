@@ -47,11 +47,14 @@ app should show its sign-in screen. Failed sign-ins count toward the same lockou
 | GET | /items/{sku} | One item with its listings, sales, history and photos |
 | GET | /totes | Every tote and place with counts |
 | GET | /totes/{code} | What's in a tote, plus its recent history |
-| PATCH | /items/{sku} | *planned* Edit our records (title, price, notes, cost) |
-| POST | /items/{sku}/move | *planned* `{"tote": "A5"}` |
-| POST | /items/{sku}/missing | *planned* `{"missing": true}` |
-| POST | /items/{sku}/status | *planned* `{"status": "ENDED", "note": "..."}` |
-| POST | /items/bulk | *planned* Same actions for many SKUs, all or nothing |
+| PATCH | /items/{sku} | Edit our records: any of `title`, `price`, `cost`, `cost_note`, `notes` (empty cost or price = unknown). Title and price only when the item isn't live on eBay. -> `{"item", "changed": [...]}` |
+| POST | /items/{sku}/move | `{"tote": "A5"}` -> `{"item", "done"}` |
+| POST | /items/{sku}/missing | `{"missing": true, "note": "..."}` (false = found) |
+| POST | /items/{sku}/status | `{"status": "ENDED", "note": "..."}` |
+| POST | /items/{sku}/price-suggestion | `{"price": 12.99, "note": "..."}` Record a price to set on eBay by hand (nothing is sent to eBay) |
+| POST | /items/{sku}/price-applied | `{"price": 12.99}` The price was changed on eBay; clears the suggestion |
+| POST | /items/{sku}/relisted-as | `{"sku": "MV-00852"}` This cancelled, returned or ended item was listed again |
+| POST | /items/bulk | `{"skus": [...], "action": "move"/"missing"/"found"/"status"/"drop", ...}` with `tote`, `status`, `note` or `percent` (drop = suggest a lower price). All or nothing -> `{"done", "skus"}` |
 | POST | /totes/{code}/count | *planned* `{"here": [...], "extra": [...]}` |
 | POST | /totes/consolidate, /totes/{code}/split | *planned* |
 

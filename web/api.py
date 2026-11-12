@@ -16,8 +16,8 @@ from werkzeug.security import check_password_hash
 
 from ebay import capture, db
 
-from . import (ITEMS_SQL, ITEM_SORTS, MAX_FAILED_SIGN_INS, LOCKOUT_MINUTES, TOTE_SORTS, _item_filters, _parse_json,
-               _password_mark, _sku, order_by, sign_in_failures)
+from . import (ITEMS_SQL, ITEM_SORTS, MAX_FAILED_SIGN_INS, LOCKOUT_MINUTES, TOTE_SORTS, _float, _item_filters,
+               _parse_json, _password_mark, _sku, edit_changes, item_action, order_by, sign_in_failures)
 
 blueprint = Blueprint("api", __name__, url_prefix="/api/v1")
 
@@ -190,6 +190,122 @@ def tote(code):
     rows = g.conn.execute(ITEMS_SQL + " WHERE l.code = ? AND i.status NOT IN (?, ?) ORDER BY i.sku",
                           (code, *db.GONE)).fetchall()
     return jsonify({"tote": dict(place), "items": [_item_json(r) for r in rows]})
+
+
+# --- changing items (our records only; nothing here touches eBay) ---
+
+def _item_reply(sku, **extra):
+    row = g.conn.execute(ITEMS_SQL + " WHERE i.sku = ?", (sku,)).fetchone()
+    return jsonify({"item": _item_json(row), **extra})
+
+
+def _act(skus, action, args):
+    """Run item_action in one transaction: all of it happens, or none of it and a 400 says why."""
+    try:
+        with g.conn:
+            return item_action(g.conn, skus, action, args, "api", g.user["id"]), None
+    except ValueError as e:
+        return None, error(400, str(e).rstrip(".") + ".")
+
+
+def _known(sku):
+    sku = _sku(sku)
+    return sku if g.conn.execute("SELECT 1 FROM items WHERE sku = ?", (sku,)).fetchone() else None
+
+
+@blueprint.route("/items/<sku>", methods=["PATCH"])
+@token_required
+def item_edit(sku):
+    """Correct our records: notes and cost always; title and price only when the item isn't live on eBay."""
+    sku = _known(sku)
+    if not sku:
+        return error(404, "No such item.")
+    try:
+        changes = edit_changes(_body())
+        with g.conn:
+            changed = db.edit_item(g.conn, sku, changes, "api", g.user["id"])
+    except ValueError as e:
+        return error(400, str(e))
+    return _item_reply(sku, changed=changed)
+
+
+@blueprint.route("/items/<sku>/<action>", methods=["POST"])
+@token_required
+def item_do(sku, action):
+    """move {"tote"}, missing {"missing": true/false, "note"}, status {"status", "note"}."""
+    sku = _known(sku)
+    if not sku:
+        return error(404, "No such item.")
+    body = _body()
+    if action == "missing":
+        action = "missing" if body.get("missing", True) else "found"
+    elif action not in ("move", "status"):
+        return error(404, "No such action.")
+    done, err = _act([sku], action, body)
+    return err or _item_reply(sku, done=done)
+
+
+@blueprint.route("/items/<sku>/price-suggestion", methods=["POST"])
+@token_required
+def item_suggest(sku):
+    """Record a lower (or higher) price to set on eBay by hand. Nothing is sent to eBay."""
+    sku = _known(sku)
+    if not sku:
+        return error(404, "No such item.")
+    body = _body()
+    try:
+        with g.conn:
+            db.suggest_price(g.conn, sku, _float(body.get("price")), "api", g.user["id"],
+                             str(body.get("note") or "").strip() or None)
+    except ValueError as e:
+        return error(400, str(e) + ".")
+    return _item_reply(sku), 201
+
+
+@blueprint.route("/items/<sku>/price-applied", methods=["POST"])
+@token_required
+def item_applied(sku):
+    """Someone changed the price on eBay: record it, which clears the suggestion."""
+    sku = _known(sku)
+    if not sku:
+        return error(404, "No such item.")
+    price = _float(_body().get("price"))
+    if price is None or price <= 0:
+        return error(400, "Send the new eBay price.")
+    with g.conn:
+        old = g.conn.execute("SELECT price FROM items WHERE sku = ?", (sku,)).fetchone()[0]
+        g.conn.execute("UPDATE items SET price = ?, updated_at = ? WHERE sku = ?", (price, db.now(), sku))
+        db.log_event(g.conn, "item", sku, "price_applied", "api", g.user["id"], data={"from": old, "to": price})
+    return _item_reply(sku)
+
+
+@blueprint.route("/items/<sku>/relisted-as", methods=["POST"])
+@token_required
+def item_relisted(sku):
+    """{"sku": "MV-00852"}: this cancelled, returned or ended item was listed again under that SKU."""
+    sku = _known(sku)
+    if not sku:
+        return error(404, "No such item.")
+    try:
+        with g.conn:
+            db.link_relist(g.conn, sku, _sku(str(_body().get("sku") or "")), "api", g.user["id"])
+    except ValueError as e:
+        return error(400, str(e) + ".")
+    return _item_reply(sku)
+
+
+@blueprint.route("/items/bulk", methods=["POST"])
+@token_required
+def items_bulk():
+    """{"skus": [...], "action": "move" | "missing" | "found" | "status" | "drop", plus tote, status, note
+    or percent}. All or nothing."""
+    body = _body()
+    skus = body.get("skus")
+    if not isinstance(skus, list) or not all(isinstance(s, (str, int)) for s in skus):
+        return error(400, "Send skus as a list.")
+    skus = list(dict.fromkeys(_sku(str(s)) for s in skus))
+    done, err = _act(skus, str(body.get("action") or ""), body)
+    return err or jsonify({"done": done, "skus": skus})
 
 
 # --- capture (the camera flow) ---
