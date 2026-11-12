@@ -20,7 +20,8 @@ from . import db, drafts
 
 CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9-]{8,64}$")
 MAX_PHOTO_BYTES = 30 * 1024 * 1024
-PHOTO_TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/heic": "heic"}
+# JPEG or PNG: the drafter can't read HEIC, so the app converts (iOS does it in one call).
+PHOTO_TYPES = {"image/jpeg": "jpg", "image/png": "png"}
 
 # Quick choices for an item's note. Free text sits beside them, and Claude reads both, so a tag and
 # text that say the same thing (or more) are fine.
@@ -118,7 +119,7 @@ def add_photo(conn, batch_id, sku, client_id, content_type, data, user, batches_
         raise CaptureError("A photo needs an ID of 8 to 64 letters, digits or dashes (a UUID works).")
     ext = PHOTO_TYPES.get((content_type or "").split(";")[0].strip().lower())
     if not ext:
-        raise CaptureError("Photos must be JPEG, PNG or HEIC.")
+        raise CaptureError("Photos must be JPEG or PNG.")
     if not data:
         raise CaptureError("That photo was empty.")
     if len(data) > MAX_PHOTO_BYTES:
@@ -190,16 +191,25 @@ def finish_batch(conn, batch_id, user):
 
 
 def items(conn, batch_id):
-    """The batch's items in shooting order, each {"sku", "position", "photos", "note", "drafted"}."""
+    """The batch's items in shooting order, each {"sku", "position", "photos", "note", "drafted", "draft"}
+    (draft: its title, price, condition and open questions once Claude has written it)."""
     rows = conn.execute("SELECT sku, position, data FROM drafts WHERE batch_id = ? ORDER BY position, sku",
                         (batch_id,)).fetchall()
     out = []
     for r in rows:
         data = json.loads(r["data"])
+        drafted = bool(data.get("drafted_by") or data.get("title"))
         out.append({"sku": r["sku"], "position": r["position"], "photos": data.get("photos", []),
                     "note": data.get("note") or {"tags": [], "text": data.get("whiteboard_notes", "")},
-                    "drafted": bool(data.get("drafted_by") or data.get("title"))})
+                    "drafted": drafted,
+                    "draft": {k: data.get(k) for k in ("title", "price", "condition", "needs_check")} if drafted else None})
     return out
+
+
+def note_text(note):
+    """An item's note as one piece of text for the drafter: the tags, then what was typed."""
+    note = note or {}
+    return "\n".join(p for p in ("; ".join(note.get("tags") or []), (note.get("text") or "").strip()) if p)
 
 
 def recent_tags(conn, user, limit=6):

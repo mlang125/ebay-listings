@@ -173,6 +173,23 @@ MIGRATIONS = [
     -- Batches shot in the phone app are open until someone finishes the tote (see ebay/capture.py).
     ALTER TABLE batches ADD COLUMN finished_at TEXT;
     """,
+    """
+    -- Work that runs in the background, like drafting a tote with Claude (see ebay/jobs.py).
+    CREATE TABLE jobs (
+        id INTEGER PRIMARY KEY,
+        kind TEXT NOT NULL,
+        params TEXT NOT NULL,        -- JSON
+        status TEXT NOT NULL,        -- queued / running / done / failed
+        done INTEGER NOT NULL DEFAULT 0,
+        total INTEGER NOT NULL DEFAULT 0,
+        errors TEXT NOT NULL DEFAULT '[]',  -- JSON [{"sku", "error"}]
+        cost_usd REAL NOT NULL DEFAULT 0,
+        user_id INTEGER REFERENCES users(id),
+        created_at TEXT NOT NULL,
+        heartbeat_at TEXT,           -- a running job updates it; a stale one was interrupted
+        finished_at TEXT
+    );
+    """,
 ]
 
 

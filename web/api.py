@@ -11,11 +11,12 @@ import hashlib
 import os
 import re
 import secrets
+import threading
 
-from flask import Blueprint, g, jsonify, request, send_from_directory, url_for
+from flask import Blueprint, current_app, g, jsonify, request, send_from_directory, url_for
 from werkzeug.security import check_password_hash
 
-from ebay import api as ebay_api, capture, db, orders, sales, trading
+from ebay import api as ebay_api, capture, db, jobs, orders, sales, trading
 
 from . import (ITEMS_SQL, ITEM_SORTS, LOCKOUT_MINUTES, MAX_FAILED_SIGN_INS, TOTE_SORTS, USERS_SQL, _float,
                _item_filters, _parse_json, _password_mark, _sku, activity_rows, attention, change_user, count_tote,
@@ -639,7 +640,7 @@ def capture_delete_item(batch_id, sku):
 @blueprint.route("/batches/<int:batch_id>/items/<sku>/photos/<client_id>", methods=["PUT"])
 @token_required
 def capture_photo(batch_id, sku, client_id):
-    """The photo is the request body (Content-Type image/jpeg, image/png or image/heic), or a
+    """The photo is the request body (Content-Type image/jpeg or image/png), or a
     multipart field named `photo`. Sending the same client_id again is harmless."""
     upload = request.files.get("photo")
     content_type, data = (upload.mimetype, upload.read()) if upload else (request.content_type, request.get_data())
@@ -679,3 +680,52 @@ def photo(batch, filename):
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", batch):
         return error(404, "No such photo.")
     return send_from_directory(os.path.join(g.batches_dir, batch, "photos"), filename)
+
+
+
+# --- drafting with Claude (background jobs) ---
+
+@blueprint.route("/batches/drafts", methods=["POST"])
+@token_required
+def drafts_start():
+    """{"batches": [41, 42], "model": "opus"}: draft every undrafted item in these finished batches with
+    Claude, in the background. About $0.10 an item with Opus. Listers and admins only."""
+    if g.user["role"] not in ("admin", "lister"):
+        return error(403, "Only admins and listers can create drafts.")
+    body = _body()
+    ids = body.get("batches")
+    if not isinstance(ids, list) or not all(isinstance(i, int) and not isinstance(i, bool) for i in ids):
+        return error(400, "Send batches as a list of batch IDs.")
+    try:
+        with g.conn:
+            job_id, empty = jobs.start_drafts(g.conn, ids, g.user["id"], body.get("model"))
+    except LookupError as e:
+        return error(404, str(e))
+    except ValueError as e:
+        return error(400, str(e))
+    args = (current_app.config["DB_PATH"], job_id, g.batches_dir)
+    if current_app.config.get("JOBS_INLINE"):  # tests: run it now, with Claude faked
+        jobs.run(*args)
+    else:
+        threading.Thread(target=jobs.run, args=args, daemon=True, name="job-%d" % job_id).start()
+    job = jobs.get(g.conn, job_id)
+    return jsonify({"job": job, "no_photos": empty,
+                    "estimate_usd": jobs.estimate(job["params"]["model"], job["total"])}), 202
+
+
+@blueprint.route("/jobs/<int:job_id>")
+@token_required
+def job_get(job_id):
+    """Progress: status (queued, running, done, failed or interrupted), done of total, errors, cost so far.
+    An interrupted job is finished by starting the same batches again; drafted items are skipped."""
+    try:
+        return jsonify({"job": jobs.get(g.conn, job_id)})
+    except LookupError as e:
+        return error(404, str(e))
+
+
+@blueprint.route("/jobs")
+@token_required
+def job_list():
+    rows = g.conn.execute("SELECT id FROM jobs ORDER BY id DESC LIMIT 20").fetchall()
+    return jsonify({"jobs": [jobs.get(g.conn, r["id"]) for r in rows]})

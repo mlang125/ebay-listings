@@ -51,6 +51,11 @@ box"), or what it is. Copy that note into whiteboard_notes and let it override w
 suggest. Short codes like "N1", "T3" or "MV-00012" are tote or item IDs: leave them out of \
 whiteboard_notes and don't ask about them. The divider photo is never listed.
 
+Items photographed in the phone app have no divider photo: the seller's note comes as text \
+instead (quick tags like "Untested" plus anything they typed). Treat it exactly like the \
+whiteboard: copy it into whiteboard_notes and let it override the photos. Tags and text may \
+repeat each other.
+
 Fields:
 - title: at most 80 characters, and use the space. Lead with brand and model/name, then the \
 item type and the details buyers search for (size, color, edition, year, quantity, "Set of 2", \
@@ -153,11 +158,14 @@ def _required_aspects(category_id):
     return [a["localizedAspectName"] for a in found.get("aspects", []) if a.get("aspectConstraint", {}).get("aspectRequired")]
 
 
-def draft(claude, model, divider, photos, tote=None, effort="medium"):
-    """Draft one item. `divider` and each photo are paths or open files. Returns (draft, run info)."""
+def draft(claude, model, divider, photos, tote=None, effort="medium", note=None):
+    """Draft one item. `divider` and each photo are paths or open files; `note` is the seller's typed
+    note (the phone app's replacement for the divider photo). Returns (draft, run info)."""
     content = [{"type": "text", "text": "Divider photo (the whiteboard note for this item):"}]
     if divider is not None:
         content.append(_image_block(divider))
+    elif note:
+        content[0]["text"] = "The seller's note about this item:\n" + note
     else:
         content[0]["text"] = "There is no divider photo for this item."
     content.append({"type": "text", "text": "Item photos, in listing order:"})

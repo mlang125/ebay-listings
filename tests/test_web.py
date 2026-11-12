@@ -22,7 +22,7 @@ S = tempfile.mkdtemp(prefix="ebay-webtest-")
 shutil.copy(os.path.join(ROOT, "data", "ebay.db"), os.path.join(S, "ebay.db"))
 shutil.copytree(os.path.join(ROOT, "batches", "batch1"), os.path.join(S, "batches", "batch1"))
 
-from ebay import api, comps, db, drafts, listings, orders, sales, trading  # noqa: E402
+from ebay import api, comps, db, drafter, drafts, listings, orders, sales, trading  # noqa: E402
 from web import create_app  # noqa: E402
 from werkzeug.datastructures import MultiDict  # noqa: E402
 conn = db.connect(S + "/ebay.db"); db.set_password(conn, "matt", "testpass123"); db.add_user(conn, "sam", "lister"); db.set_password(conn, "sam", "testpass456"); conn.close()
@@ -744,6 +744,52 @@ assert api_c.get("/api/v1/batches/999999", headers=H).status_code == 404
 assert api_c.post("/api/v1/batches/999999/items", headers=H).status_code == 404
 tags = api_c.get("/api/v1/note-tags", headers=H).get_json()
 assert tags["recent"][0] == "Untested" and "Tested, works" in tags["standard"]
+
+# --- API: Create drafts (Claude faked; runs inline instead of in a thread) ---
+drafted_calls = []
+def fake_draft(claude, model, divider, photos, tote=None, effort="medium", note=None):
+    drafted_calls.append((model, [os.path.basename(p) for p in photos], note))
+    if "bbbbbbbb" in photos[0] and len(drafted_calls) < 3:
+        raise RuntimeError("Claude stopped early (max_tokens)")
+    return ({"whiteboard_notes": note, "title": "Drafted " + os.path.basename(photos[0])[:8], "condition": "USED_GOOD",
+             "price": 12.5, "needs_check": ["Does it work?"], "photos": ["must not replace the phone's photos"],
+             "drafted_by": {"model": model, "cost_usd": 0.1}}, {"model": model, "cost_usd": 0.1})
+drafter.draft, drafter.client = fake_draft, lambda: "fake claude"
+app.config["JOBS_INLINE"] = True
+assert api_c.post("/api/v1/batches/drafts", headers=H, json={"batches": [nb["id"]]}).status_code == 400, "finish the tote first"
+assert api_c.post("/api/v1/batches/drafts", headers=H, json={"batches": [999999]}).status_code == 404
+assert api_c.post("/api/v1/batches/drafts", headers=H, json={"batches": [cbid], "model": "gpt"}).status_code == 400
+api_c.post("/api/v1/users", headers=H, json={"action": "add", "name": "appshipper", "role": "shipper", "password": "longenough2"})
+shp = {"Authorization": "Bearer " + api_c.post("/api/v1/auth/token", json={"name": "appshipper", "password": "longenough2"}).get_json()["token"]}
+assert api_c.post("/api/v1/batches/drafts", headers=shp, json={"batches": [cbid]}).status_code == 403, "shippers don't spend Claude money"
+r = api_c.post("/api/v1/batches/drafts", headers=H, json={"batches": [cbid]})
+assert r.status_code == 202, r.data
+r = r.get_json(); job = r["job"]
+assert r["estimate_usd"] == 0.2 and job["total"] == 2 and job["params"]["model"] == "claude-opus-5-5"
+job = api_c.get("/api/v1/jobs/%d" % job["id"], headers=H).get_json()["job"]
+assert job["status"] == "done" and job["done"] == 2 and [e["sku"] for e in job["errors"]] == [sku2], job
+assert drafted_calls[0] == ("claude-opus-5-5", [sku1 + "-aaaaaaaa-1.jpg"], "Untested; Has original box\nNot tested; chip on the base. 'quotes' & <tags> are fine")
+items_now = {i["sku"]: i for i in api_c.get("/api/v1/batches/%d" % cbid, headers=H).get_json()["batch"]["items"]}
+assert items_now[sku1]["drafted"] and items_now[sku1]["draft"]["title"].startswith("Drafted") and not items_now[sku2]["drafted"]
+assert [p["file"] for p in items_now[sku1]["photos"]] == [sku1 + "-aaaaaaaa-1.jpg"], "the phone's photos are kept"
+assert api_c.patch("/api/v1/batches/%d/items/%s" % (cbid, sku1), headers=H, json={"note": {"text": "x"}}).status_code == 400, \
+    "a drafted item is edited on the review page"
+cdb = db.connect(S + "/ebay.db")
+assert tuple(cdb.execute("SELECT title, price, status FROM items WHERE sku = ?", (sku1,)).fetchone()) == ("Drafted " + sku1, 12.5, "PENDING")
+assert cdb.execute("SELECT user_id FROM events WHERE entity_id = ? AND action = 'drafted'", (sku1,)).fetchone()[0] == 1
+cdb.close()
+r = api_c.post("/api/v1/batches/drafts", headers=H, json={"batches": [cbid]}).get_json()
+assert r["job"]["total"] == 1 and r["job"]["status"] == "done" and not r["job"]["errors"], "starting again drafts only what's left"
+assert api_c.post("/api/v1/batches/drafts", headers=H, json={"batches": [cbid]}).status_code == 400, "nothing left to draft"
+assert len(api_c.get("/api/v1/jobs", headers=H).get_json()["jobs"]) >= 2
+check(c.get("/drafts"), has=[cb["name"]])
+check(c.get("/drafts/" + cb["name"]), has=["Drafted " + sku1])
+cdb = db.connect(S + "/ebay.db")
+with cdb:
+    stale = cdb.execute("INSERT INTO jobs (kind, params, status, total, created_at, heartbeat_at) VALUES"
+                        " ('drafts', '{\"skus\": []}', 'running', 5, '2026-01-01T00:00:00', '2026-01-01T00:00:00')").lastrowid
+cdb.close()
+assert api_c.get("/api/v1/jobs/%d" % stale, headers=H).get_json()["job"]["status"] == "interrupted"
 
 # --- nav shows where you are ---
 for page, label in [("/items", "Items"), ("/items/MV-00005", "Items"), ("/totes", "Totes"), ("/picklist", "Pick list"), ("/checks", "Checks")]:
