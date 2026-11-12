@@ -551,6 +551,42 @@ assert not re.search(r"^\s*\.label\s*\{", css, re.M), "the 4x6 label style must 
 check(c.get("/labels?codes=A2"), has=['class="tote-label"'])
 check(c.get("/sales"), has=['<span class="label">Item sales'])
 
+# --- JSON API (docs/API.md) ---
+api_c = app.test_client()
+r = api_c.get("/api/v1/me")
+assert r.status_code == 401 and r.get_json() == {"error": {"code": "unauthorized", "message": "Sign in again."}}
+r = api_c.post("/api/v1/auth/token", json={"name": "matt", "password": "nope", "device": "test phone"})
+assert r.status_code == 401 and r.get_json()["error"]["message"] == "Wrong name or password."
+r = api_c.post("/api/v1/auth/token", json={"name": "Matt", "password": "testpass123", "device": "test phone"})
+assert r.status_code == 201, r.get_data(as_text=True)
+api_tok = r.get_json()["token"]
+H = {"Authorization": "Bearer " + api_tok}
+assert api_c.get("/api/v1/me", headers=H).get_json() == {"user": {"id": 1, "name": "matt", "role": "admin"}}
+assert fresh().execute("select count(*) from api_tokens where token_hash = ?", (api_tok,)).fetchone()[0] == 0, "only a hash is stored"
+assert fresh().execute("select data from events where action = 'signed_in' and actor = 'api' order by id desc").fetchone()[0].count("test phone")
+r = api_c.get("/api/v1/items?status=LISTED&limit=5", headers=H).get_json()
+assert len(r["items"]) == 5 and r["total"] > 5 and all(i["status"] == "LISTED" for i in r["items"]) and r["filters"] == {"status": "LISTED"}
+r = api_c.get("/api/v1/items/5", headers=H).get_json()
+assert r["item"]["sku"] == "MV-00005" and isinstance(r["history"], list) and "listings" in r and "sales" in r
+r = api_c.get("/api/v1/items/MV-99999", headers=H)
+assert r.status_code == 404 and r.get_json()["error"] == {"code": "not_found", "message": "No item MV-99999."}
+r = api_c.get("/api/v1/totes?sort=on_hand&dir=desc", headers=H).get_json()
+assert r["totes"] and r["next_free"] and r["totes"][0]["on_hand"] >= r["totes"][-1]["on_hand"]
+r = api_c.get("/api/v1/totes/" + T.lower(), headers=H).get_json()
+assert r["tote"]["code"] == T and [i["sku"] for i in r["items"]] == db.on_hand(fresh(), T)
+assert api_c.get("/api/v1/nothing-here", headers=H).get_json()["error"]["code"] == "not_found"
+assert api_c.post("/api/v1/me", headers=H).status_code == 405, "no CSRF needed, but wrong methods are still refused"
+# Sign out revokes the token; a new password does too.
+assert api_c.delete("/api/v1/auth/token", headers=H).status_code == 204
+assert api_c.get("/api/v1/me", headers=H).status_code == 401
+check(c.post("/users", data={"csrf": tok, "action": "add", "name": "apiuser", "role": "lister", "password": "apipass123"}, follow_redirects=True),
+      has=["Added apiuser"])
+au_tok = api_c.post("/api/v1/auth/token", json={"name": "apiuser", "password": "apipass123"}).get_json()["token"]
+assert api_c.get("/api/v1/me", headers={"Authorization": "Bearer " + au_tok}).get_json()["user"]["role"] == "lister"
+check(c.post("/users", data={"csrf": tok, "action": "password", "name": "apiuser", "password": "apipass999"}, follow_redirects=True))
+assert api_c.get("/api/v1/me", headers={"Authorization": "Bearer " + au_tok}).status_code == 401, "a new password ends app sign-ins"
+H = {"Authorization": "Bearer " + api_c.post("/api/v1/auth/token", json={"name": "matt", "password": "testpass123"}).get_json()["token"]}
+
 # --- nav shows where you are ---
 for page, label in [("/items", "Items"), ("/items/MV-00005", "Items"), ("/totes", "Totes"), ("/picklist", "Pick list"), ("/checks", "Checks")]:
     current = re.findall(r'aria-current="page">([^<]+)<', c.get(page).get_data(as_text=True))

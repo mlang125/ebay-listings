@@ -21,7 +21,7 @@ from werkzeug.utils import secure_filename
 from werkzeug.exceptions import HTTPException
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from ebay import api, comps, config, db, drafts, listings, orders, sales, trading
+from ebay import api as ebay_api, comps, config, db, drafts, listings, orders, sales, trading
 
 BATCH_RE = re.compile(r"^[\w.-]+$")
 
@@ -61,6 +61,7 @@ def create_app(db_path=None, batches_dir=None, inbox_dir=None):
         SESSION_COOKIE_SAMESITE="Lax",
     )
     _routes(app)
+    app.register_blueprint(api.blueprint)
     return app
 
 
@@ -218,6 +219,15 @@ def _password_mark(password_hash):
     return hashlib.sha256((password_hash or "").encode()).hexdigest()[:16]
 
 
+def sign_in_failures(conn, name):
+    """Wrong passwords for this name in the lockout window since its last good sign-in (website and apps)."""
+    since = (datetime.datetime.now() - datetime.timedelta(minutes=LOCKOUT_MINUTES)).isoformat(timespec="seconds")
+    return conn.execute(
+        "SELECT COUNT(*) FROM events WHERE entity = 'user' AND entity_id = ? AND action = 'sign_in_failed' AND at >= ?"
+        " AND id > COALESCE((SELECT MAX(id) FROM events WHERE entity = 'user' AND entity_id = ? AND action = 'signed_in'), 0)",
+        (name, since, name)).fetchone()[0]
+
+
 def login_required(view):
     @functools.wraps(view)
     def wrapped(*args, **kwargs):
@@ -240,6 +250,8 @@ def _routes(app):
         g.conn = db.connect(app.config["DB_PATH"])
         g.batches_dir = app.config["BATCHES_DIR"]
         g.user = None
+        if request.path.startswith("/api/"):
+            return  # web/api.py signs requests in with a bearer token
         if "user_id" in session:
             g.user = g.conn.execute(
                 "SELECT * FROM users WHERE id = ? AND active = 1", (session["user_id"],)
@@ -257,12 +269,16 @@ def _routes(app):
 
     @app.errorhandler(HTTPException)
     def http_error(e):
+        if request.path.startswith("/api/"):
+            return api.error(e.code, e.description)
         return render_template("error.html", code=e.code, title=ERROR_TITLES.get(e.code, e.name),
                                message=e.description if e.code != 404 else None), e.code
 
     @app.errorhandler(500)
     def server_error(e):
         # Flask has already written the traceback to the server's terminal.
+        if request.path.startswith("/api/"):
+            return api.error(500, "Something went wrong on the server; the details are in its terminal.")
         return render_template("error.html", code=500, title=ERROR_TITLES[500], message=None), 500
 
     @app.teardown_request
@@ -290,12 +306,7 @@ def _routes(app):
     def login():
         if request.method == "POST":
             name = request.form["name"].strip().lower()[:40]
-            since = (datetime.datetime.now() - datetime.timedelta(minutes=LOCKOUT_MINUTES)).isoformat(timespec="seconds")
-            failures = g.conn.execute(
-                "SELECT COUNT(*) FROM events WHERE entity = 'user' AND entity_id = ? AND action = 'sign_in_failed' AND at >= ?"
-                " AND id > COALESCE((SELECT MAX(id) FROM events WHERE entity = 'user' AND entity_id = ? AND action = 'signed_in'), 0)",
-                (name, since, name)).fetchone()[0]
-            if failures >= MAX_FAILED_SIGN_INS:
+            if sign_in_failures(g.conn, name) >= MAX_FAILED_SIGN_INS:
                 flash("Too many wrong passwords for %s. Wait %d minutes and try again." % (name, LOCKOUT_MINUTES), "error")
                 return render_template("login.html"), 429
             row = g.conn.execute(
@@ -564,7 +575,7 @@ def _routes(app):
         try:
             comps.refresh_active(g.conn, batch, {sku}, log=messages.append, user=g.user["id"], actor="web")
             flash("Price estimate updated.", "ok")
-        except (api.EbayError, SystemExit) as e:
+        except (ebay_api.EbayError, SystemExit) as e:
             flash("Couldn't get comps: %s" % e, "error")
         return redirect(url_for("draft", batch=batch, sku=sku))
 
@@ -588,7 +599,7 @@ def _routes(app):
             messages = []
             try:
                 listings.publish(g.conn, batch, skus, user=g.user["id"], actor="web", log=messages.append)
-            except (api.EbayError, SystemExit) as e:
+            except (ebay_api.EbayError, SystemExit) as e:
                 messages.append("Stopped: %s" % e)
                 flash("Publishing stopped with an error from eBay (details below).", "error")
             for m in messages:
@@ -604,18 +615,6 @@ def _routes(app):
 
     # --- items and totes ---
 
-    def _sku(text):
-        """A SKU from what someone typed or scanned: 'MV-00920', 'mv920', just '920', or a sticker's
-        QR code (the item's address, ending in /items/MV-00920)."""
-        text = (text or "").strip()
-        if "/items/" in text:
-            text = text.rsplit("/items/", 1)[1].split("?")[0].strip("/")
-        text = text.upper()
-        if re.fullmatch(r"\d{1,5}", text):
-            return "MV-%05d" % int(text)
-        if re.fullmatch(r"MV-?\d{1,5}", text):
-            return "MV-%05d" % int(text.replace("MV", "").strip("-"))
-        return text
 
     @app.route("/move", methods=["GET", "POST"])
     @login_required
@@ -695,36 +694,6 @@ def _routes(app):
             return redirect(url_for("item", sku=matches[0]["sku"]))
         return redirect(url_for("items", q=q))
 
-    def _item_filters():
-        """The items page's filters from the URL, as (SQL, params, cleaned-up values)."""
-        f = {k: request.args.get(k, "").strip() for k in ("q", "status", "tote", "min_price", "max_price", "min_days")}
-        where, params = ["1 = 1"], []
-        if f["q"]:
-            where.append("(i.sku LIKE ? OR i.title LIKE ?)")
-            params += ["%" + f["q"] + "%"] * 2
-        if f["status"] == "MISSING":
-            where.append("i.missing_since IS NOT NULL")
-        elif f["status"] == "SUGGESTED":
-            where.append("i.status = 'LISTED' AND " + db.LATEST_SUGGESTION + " IS NOT NULL")
-        elif f["status"] == "ON_HAND":
-            where.append("i.status NOT IN (?, ?)")
-            params += list(db.GONE)
-        elif f["status"]:
-            where.append("i.status = ?")
-            params.append(f["status"])
-        if f["tote"] == "?":
-            where.append("i.location_id IS NULL")
-        elif f["tote"]:
-            where.append("l.code = ?")
-            params.append(f["tote"].upper())
-        for key, test in (("min_price", "i.price >= ?"), ("max_price", "i.price <= ?"), ("min_days", DAYS_LISTED + " >= ?")):
-            value = _float(f[key])
-            if value is not None:
-                where.append(test)
-                params.append(value)
-            else:
-                f[key] = ""
-        return ITEMS_SQL + " WHERE " + " AND ".join(where), params, f
 
     @app.route("/items")
     @login_required
@@ -1191,7 +1160,7 @@ def _routes(app):
         ending items happens only when someone confirms on the page, through the bulk status action."""
         try:
             active = trading.active_listings()
-        except (api.EbayError, SystemExit) as e:
+        except (ebay_api.EbayError, SystemExit) as e:
             flash("Couldn't get listings from eBay: %s" % e, "error")
             return redirect(url_for("checks"))
         diff = trading.compare(g.conn, active)
@@ -1230,7 +1199,7 @@ def _routes(app):
             flash("%d orders checked, %d new sales." % (counts["orders"], counts["new_lines"]), "ok")
             for sku, before, after, title in counts["changes"]:
                 flash("%s: %s → %s  %s" % (sku, before, after, title), "ok")
-        except (api.EbayError, SystemExit) as e:
+        except (ebay_api.EbayError, SystemExit) as e:
             flash("Order sync failed: %s" % e, "error")
         return redirect(request.form.get("back") or url_for("picklist"))
 
@@ -1367,6 +1336,52 @@ ITEMS_SQL = """
 """ % (DAYS_LISTED, LAST_CHANGE, db.LATEST_SUGGESTION)
 
 
+def _sku(text):
+    """A SKU from what someone typed or scanned: 'MV-00920', 'mv920', just '920', or a sticker's
+    QR code (the item's address, ending in /items/MV-00920)."""
+    text = (text or "").strip()
+    if "/items/" in text:
+        text = text.rsplit("/items/", 1)[1].split("?")[0].strip("/")
+    text = text.upper()
+    if re.fullmatch(r"\d{1,5}", text):
+        return "MV-%05d" % int(text)
+    if re.fullmatch(r"MV-?\d{1,5}", text):
+        return "MV-%05d" % int(text.replace("MV", "").strip("-"))
+    return text
+
+
+def _item_filters():
+    """The items page's filters from the URL, as (SQL, params, cleaned-up values)."""
+    f = {k: request.args.get(k, "").strip() for k in ("q", "status", "tote", "min_price", "max_price", "min_days")}
+    where, params = ["1 = 1"], []
+    if f["q"]:
+        where.append("(i.sku LIKE ? OR i.title LIKE ?)")
+        params += ["%" + f["q"] + "%"] * 2
+    if f["status"] == "MISSING":
+        where.append("i.missing_since IS NOT NULL")
+    elif f["status"] == "SUGGESTED":
+        where.append("i.status = 'LISTED' AND " + db.LATEST_SUGGESTION + " IS NOT NULL")
+    elif f["status"] == "ON_HAND":
+        where.append("i.status NOT IN (?, ?)")
+        params += list(db.GONE)
+    elif f["status"]:
+        where.append("i.status = ?")
+        params.append(f["status"])
+    if f["tote"] == "?":
+        where.append("i.location_id IS NULL")
+    elif f["tote"]:
+        where.append("l.code = ?")
+        params.append(f["tote"].upper())
+    for key, test in (("min_price", "i.price >= ?"), ("max_price", "i.price <= ?"), ("min_days", DAYS_LISTED + " >= ?")):
+        value = _float(f[key])
+        if value is not None:
+            where.append(test)
+            params.append(value)
+        else:
+            f[key] = ""
+    return ITEMS_SQL + " WHERE " + " AND ".join(where), params, f
+
+
 def _qr_svg(text):
     """A QR code as inline SVG markup (sized by CSS)."""
     out = io.BytesIO()
@@ -1401,3 +1416,6 @@ def event_details(data_json):
     if isinstance(data.get("from"), dict) and isinstance(data.get("to"), dict):
         return "; ".join("%s: %s → %s" % (k, _show(data["from"].get(k)), _show(data["to"].get(k))) for k in data["to"])
     return "; ".join("%s: %s" % (k, _show(v)) for k, v in data.items() if v is not None)
+
+
+from . import api  # noqa: E402  (the JSON API; imports helpers above)

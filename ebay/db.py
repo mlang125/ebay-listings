@@ -156,6 +156,19 @@ MIGRATIONS = [
     ALTER TABLE items ADD COLUMN relisted_as TEXT REFERENCES items(sku);  -- the SKU it was relisted under
     ALTER TABLE locations ADD COLUMN checked_at TEXT;  -- last time someone checked the tote's contents
     """,
+    """
+    -- Sign-ins for the phone apps (see docs/API.md). Only a hash of each token is kept.
+    CREATE TABLE api_tokens (
+        id INTEGER PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        token_hash TEXT NOT NULL UNIQUE,
+        device TEXT,
+        password_mark TEXT NOT NULL,  -- a new password makes the token stop working
+        created_at TEXT NOT NULL,
+        last_used_at TEXT,
+        revoked_at TEXT
+    );
+    """,
 ]
 
 
