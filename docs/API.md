@@ -4,7 +4,7 @@ The JSON API the phone apps use (iOS first, Android later). It runs inside the s
 website, on the same database functions, so the two can't drift apart. Everything the website can do
 should be reachable here; the apps add the camera capture flow on top.
 
-Status: **in progress.** Endpoints marked *planned* are the agreed shape but not built yet.
+Status: **built.** Everything below works and is covered by `tests/test_web.py`.
 
 ## Conventions
 
@@ -91,7 +91,9 @@ belong to their item from the moment they're taken, so nothing has to be split o
 | POST | /batches/drafts | `{"batches": [41, 42], "model": "opus"}` Create drafts with Claude in the background, for finished batches; listers and admins only -> 202 `{"job", "estimate_usd", "no_photos": [SKUs left out]}`. About $0.10 an item with Opus; at most 300 items per job |
 | GET | /jobs/{id} | Progress: `{"job": {"status", "done", "total", "errors": [{"sku", "error"}], "cost_usd", ...}}`. Status is `queued`, `running`, `done`, `failed` or `interrupted` (the server restarted: start the same batches again, drafted items are skipped) |
 | GET | /jobs | The last 20 jobs |
-| PATCH | /drafts/{sku} | *planned* Edit a draft (with `version`, like the website, so two editors can't overwrite each other) |
+| GET | /drafts/{sku} | A draft: `{"sku", "batch", "version", "state", "problems", "draft": {...}, "photos"}`. `state` is `ready`, `needs work`, `skipped` or `published`; `problems` say what stops it being ready |
+| PATCH | /drafts/{sku} | Any of `title`, `price`, `condition`, `condition_description`, `category_id`, `description`, `aspects` (`{name: [values]}`), `needs_check` (list), `comp_query`, `package` (`{weight_oz, length_in, width_in, height_in}`), `skip` (a reason, or null), plus the `version` you loaded. If someone saved since: 409 with `current`, nothing overwritten |
+| POST | /drafts/publish | `{"skus": [...]}` List ready drafts on eBay; listers and admins only -> `{"messages", "not_ready": {sku: [problems]}}`. While eBay read-only mode is on, 502 `read_only` |
 
 A batch looks like:
 

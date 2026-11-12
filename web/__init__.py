@@ -107,6 +107,8 @@ def draft_state(item):
 def problems(item):
     """Reasons a draft can't be published yet."""
     found = ["Open question: " + q for q in item.get("needs_check", [])]
+    if item.get("captured") and not (item.get("drafted_by") or item.get("title")):
+        found.insert(0, "Not drafted yet (shot in the app; Create drafts there)")
     if not item.get("title"):
         found.append("No title")
     elif len(item["title"]) > TITLE_MAX:
@@ -1469,7 +1471,7 @@ def _qr_svg(text):
 
 
 def _money_fmt(value):
-    return "" if value is None else "${:,.2f}".format(value)
+    return "${:,.2f}".format(value) if isinstance(value, (int, float)) else ""  # also a draft with no price yet
 
 
 def _parse_json(text):

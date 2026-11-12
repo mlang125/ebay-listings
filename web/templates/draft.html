@@ -43,7 +43,7 @@
     <input name="title" id="title" value="{{ item.title }}" maxlength="{{ title_max }}" required></label>
 
   <div class="row">
-    <label>Price ($) <input name="price" value="{{ '%.2f'|format(item.price) if item.price is not none else '' }}" inputmode="decimal" required></label>
+    <label>Price ($) <input name="price" value="{{ '%.2f'|format(item.price) if item.price is number else '' }}" inputmode="decimal" required></label>
     <label>Condition
       <select name="condition">
         {% for value, label in conditions %}<option value="{{ value }}" {% if value == item.condition %}selected{% endif %}>{{ label }}</option>{% endfor %}

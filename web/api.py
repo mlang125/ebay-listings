@@ -16,11 +16,12 @@ import threading
 from flask import Blueprint, current_app, g, jsonify, request, send_from_directory, url_for
 from werkzeug.security import check_password_hash
 
-from ebay import api as ebay_api, capture, db, jobs, orders, sales, trading
+from ebay import api as ebay_api, capture, config, db, drafts, jobs, listings, orders, sales, trading
 
-from . import (ITEMS_SQL, ITEM_SORTS, LOCKOUT_MINUTES, MAX_FAILED_SIGN_INS, TOTE_SORTS, USERS_SQL, _float,
-               _item_filters, _parse_json, _password_mark, _sku, activity_rows, attention, change_user, count_tote,
-               data_checks, edit_changes, item_action, order_by, ship, sign_in_failures)
+from . import (CONDITIONS, ITEMS_SQL, ITEM_SORTS, LOCKOUT_MINUTES, MAX_FAILED_SIGN_INS, TITLE_MAX, TOTE_SORTS,
+               USERS_SQL, _float, _item_filters, _parse_json, _password_mark, _sku, activity_rows, attention,
+               change_user, count_tote, data_checks, draft_state, edit_changes, item_action, order_by, problems,
+               ship, sign_in_failures)
 
 blueprint = Blueprint("api", __name__, url_prefix="/api/v1")
 
@@ -729,3 +730,149 @@ def job_get(job_id):
 def job_list():
     rows = g.conn.execute("SELECT id FROM jobs ORDER BY id DESC LIMIT 20").fetchall()
     return jsonify({"jobs": [jobs.get(g.conn, r["id"]) for r in rows]})
+
+
+
+# --- reviewing drafts (the website's Drafts pages) ---
+
+DRAFT_TEXT = ("title", "condition_description", "category_id", "description", "comp_query")
+PACKAGE = ("weight_oz", "length_in", "width_in", "height_in")
+
+
+def _draft_json(batch, item):
+    data = {k: v for k, v in item.items() if not k.startswith("_")}
+    return {"sku": item["sku"], "batch": batch, "version": item["_version"], "state": draft_state(item),
+            "problems": problems(item), "draft": data,
+            "photos": [{"file": p, "url": url_for("api.photo", batch=batch, filename=p)} for p in item.get("photos", [])]}
+
+
+def apply_draft(item, body):
+    """Copy the fields present in a JSON body into the draft, checking each. Returns the changed names."""
+    new = {}
+    for key in DRAFT_TEXT:
+        if key in body:
+            new[key] = str(body[key] or "").replace("\r\n", "\n").strip()
+    if "title" in new and len(new["title"]) > TITLE_MAX:
+        raise ValueError("The title must be at most %d characters." % TITLE_MAX)
+    if "price" in body:
+        new["price"] = _float(body["price"])
+        if new["price"] is None or new["price"] <= 0:
+            raise ValueError("Price must be a number above 0.")
+        new["price"] = round(new["price"], 2)
+    if "condition" in body:
+        if body["condition"] not in dict(CONDITIONS):
+            raise ValueError("Unknown condition %s." % body["condition"])
+        new["condition"] = body["condition"]
+    if "aspects" in body:
+        aspects = body["aspects"]
+        if not isinstance(aspects, dict) or not all(isinstance(v, list) for v in aspects.values()):
+            raise ValueError("Aspects are {name: [values]}.")
+        new["aspects"] = {str(k).strip(): [str(v).strip() for v in vs if str(v).strip()]
+                          for k, vs in aspects.items() if str(k).strip()}
+        new["aspects"] = {k: v for k, v in new["aspects"].items() if v}
+    if "needs_check" in body:
+        if not isinstance(body["needs_check"], list):
+            raise ValueError("needs_check is a list of questions.")
+        new["needs_check"] = [str(q).strip() for q in body["needs_check"] if str(q).strip()]
+    if "package" in body:
+        if not isinstance(body["package"], dict):
+            raise ValueError("package is {weight_oz, length_in, width_in, height_in}.")
+        new["package"] = dict(item.get("package") or {})
+        for k in PACKAGE:
+            if k in body["package"]:
+                value = _float(body["package"][k])
+                if value is None or value <= 0:
+                    raise ValueError("%s must be a number above 0." % k)
+                new["package"][k] = value
+    if "skip" in body:
+        new["skip"] = str(body["skip"] or "").strip() or None
+    changed = []
+    for key, value in new.items():
+        if value in (None, "") and key in ("skip", "comp_query"):
+            if item.pop(key, None) is not None:
+                changed.append(key)
+        elif item.get(key) != value:
+            item[key] = value
+            changed.append(key)
+    return changed
+
+
+def _load_draft(sku):
+    batch, item = drafts.get(g.conn, _sku(sku))
+    if item is None:
+        return None, None, error(404, "No draft for %s." % _sku(sku))
+    return batch, item, None
+
+
+@blueprint.route("/drafts/<sku>")
+@token_required
+def draft_get(sku):
+    batch, item, err = _load_draft(sku)
+    return err or jsonify(_draft_json(batch, item))
+
+
+@blueprint.route("/drafts/<sku>", methods=["PATCH"])
+@token_required
+def draft_edit(sku):
+    """Change any of a draft's fields. Send the `version` you loaded: if someone saved it since,
+    the reply is 409 with their version, and nothing is overwritten."""
+    batch, item, err = _load_draft(sku)
+    if err:
+        return err
+    if item.get("published", {}).get(config.ENV):
+        return error(409, "Already published; change it on eBay instead.", "conflict")
+    body = _body()
+    version = body.get("version")
+    if not isinstance(version, int) or isinstance(version, bool):
+        return error(400, "Send the draft's version.")
+    try:
+        changed = apply_draft(item, body)
+    except ValueError as e:
+        return error(400, str(e))
+    if changed:
+        try:
+            with g.conn:
+                drafts.save(g.conn, item, "api", g.user["id"], changed=changed, version=version)
+        except drafts.Conflict:
+            batch, theirs = drafts.get(g.conn, item["sku"])
+            reply = jsonify({"error": {"code": "conflict", "message": "Someone saved this draft while you were "
+                                       "editing it, so your changes weren't saved."}, "current": _draft_json(batch, theirs)})
+            return reply, 409
+    batch, item = drafts.get(g.conn, item["sku"])
+    return jsonify({**_draft_json(batch, item), "changed": changed})
+
+
+@blueprint.route("/drafts/publish", methods=["POST"])
+@token_required
+def drafts_publish():
+    """{"skus": [...]}: list ready drafts on eBay. Listers and admins only. While eBay read-only mode is
+    on (it is), eBay refuses and the reply says so; drafts that aren't ready are left out with the reasons."""
+    if g.user["role"] not in ("admin", "lister"):
+        return error(403, "Only admins and listers can publish.")
+    try:
+        skus = list(dict.fromkeys(_sku(str(s)) for s in _body().get("skus") or []))
+    except TypeError:
+        skus = []
+    if not skus:
+        return error(400, "Send the SKUs to publish.")
+    by_batch, blocked = {}, {}
+    for sku in skus:
+        batch, item = drafts.get(g.conn, sku)
+        if item is None:
+            blocked[sku] = ["No draft"]
+        elif draft_state(item) != "ready":
+            blocked[sku] = problems(item) or [draft_state(item)]
+        else:
+            by_batch.setdefault(batch, set()).add(sku)
+    messages, failed = [], None
+    for batch, batch_skus in by_batch.items():
+        try:
+            listings.publish(g.conn, batch, batch_skus, user=g.user["id"], actor="api", log=messages.append)
+        except (ebay_api.EbayError, SystemExit) as e:
+            failed = e
+            break
+    reply = {"messages": messages, "not_ready": blocked}
+    if failed is not None:
+        code = "read_only" if isinstance(failed, ebay_api.ReadOnly) else "ebay_error"
+        return jsonify({**reply, "error": {"code": code, "message": "Not published: %s" % failed}}), 502
+    return jsonify(reply)

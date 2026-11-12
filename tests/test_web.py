@@ -791,6 +791,49 @@ with cdb:
 cdb.close()
 assert api_c.get("/api/v1/jobs/%d" % stale, headers=H).get_json()["job"]["status"] == "interrupted"
 
+# --- API: reviewing and publishing drafts ---
+d = api_c.get("/api/v1/drafts/" + sku1.lower(), headers=H).get_json()
+assert d["sku"] == sku1 and d["batch"] == cb["name"] and d["state"] == "needs work" and "Open question: Does it work?" in d["problems"]
+assert d["photos"][0]["url"].startswith("/api/v1/photos/")
+assert api_c.get("/api/v1/drafts/MV-99999", headers=H).status_code == 404
+DP = "/api/v1/drafts/" + sku1
+assert api_c.patch(DP, headers=H, json={"title": "No version"}).status_code == 400
+assert api_c.patch(DP, headers=H, json={"version": d["version"], "title": "x" * 81}).status_code == 400
+assert api_c.patch(DP, headers=H, json={"version": d["version"], "condition": "MINT"}).status_code == 400
+assert api_c.patch(DP, headers=H, json={"version": d["version"], "package": {"weight_oz": "heavy"}}).status_code == 400
+r = api_c.patch(DP, headers=H, json={"version": d["version"], "title": "Fixed title", "needs_check": [], "category_id": "12345",
+                                     "price": "9.99", "aspects": {"Brand": ["Acme", ""], "Empty": []}, "package": {"weight_oz": 20}})
+assert r.status_code == 200, r.data
+r = r.get_json()
+assert r["state"] == "ready" and set(r["changed"]) == {"title", "needs_check", "category_id", "price", "aspects", "package"}, r
+assert r["draft"]["aspects"] == {"Brand": ["Acme"]} and r["draft"]["package"]["weight_oz"] == 20 and r["draft"]["price"] == 9.99
+r2 = api_c.patch(DP, headers=H, json={"version": d["version"], "title": "Stale edit"})
+assert r2.status_code == 409 and r2.get_json()["current"]["draft"]["title"] == "Fixed title", "an old version never overwrites"
+cdb = db.connect(S + "/ebay.db"); assert cdb.execute("SELECT title, price FROM items WHERE sku = ?", (sku1,)).fetchone()[0] == "Fixed title"
+assert cdb.execute("SELECT actor, user_id FROM events WHERE entity_id = ? AND action = 'edited' ORDER BY id DESC", (sku1,)).fetchone()[0] == "api"
+cdb.close()
+assert api_c.post("/api/v1/drafts/publish", headers=shp, json={"skus": [sku1]}).status_code == 403
+calls.clear()
+r = api_c.post("/api/v1/drafts/publish", headers=H, json={"skus": [sku1, sku2]}).get_json()
+assert calls == [({sku1}, 1, "api")] and "published as listing 999 (fake)" in r["messages"][0] and sku2 in r["not_ready"], (calls, r)
+real_publish = listings.publish
+def read_only_publish(*a, **k):
+    raise api.ReadOnly("publishing")
+listings.publish = read_only_publish
+r = api_c.post("/api/v1/drafts/publish", headers=H, json={"skus": [sku1]})
+assert r.status_code == 502 and r.get_json()["error"]["code"] == "read_only"
+listings.publish = real_publish
+
+# --- website: an app batch whose items aren't drafted yet ---
+ub = api_c.post("/api/v1/batches", headers=H, json={"tote": "Q5"}).get_json()["batch"]
+usku = api_c.post("/api/v1/batches/%d/items" % ub["id"], headers=H).get_json()["sku"]
+api_c.put(PH % (ub["id"], usku, "dddddddd-1"), headers={**H, "Content-Type": "image/jpeg"}, data=JPG)
+api_c.patch("/api/v1/batches/%d/items/%s" % (ub["id"], usku), headers=H, json={"note": {"tags": ["Lot / bundle"], "text": "3 mugs"}})
+page = check(c.get("/drafts"), has=[ub["name"]])
+page = check(c.get("/drafts/" + ub["name"]), has=[usku, "Not drafted yet"])
+page = check(c.get("/drafts/%s/%s" % (ub["name"], usku)), has=[usku])
+check(c.get("/items/" + usku), has=[usku])
+
 # --- nav shows where you are ---
 for page, label in [("/items", "Items"), ("/items/MV-00005", "Items"), ("/totes", "Totes"), ("/picklist", "Pick list"), ("/checks", "Checks")]:
     current = re.findall(r'aria-current="page">([^<]+)<', c.get(page).get_data(as_text=True))
