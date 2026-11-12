@@ -118,6 +118,15 @@ With `EBAY_READ_ONLY=1` in `.env`, nothing can be published or changed on eBay (
 Phones get a layout of their own: the top bar stays put, item lists turn into cards, and buttons are bigger.
 `tests/test_web.py` checks the whole site against a temp copy of the database (run it after any change).
 
+## Phone app API
+
+The phone apps (iOS first) talk to the same server through a JSON API at `/api/v1`, described in
+[docs/API.md](docs/API.md). Everything the website does is there, plus the camera flow: pick a tote,
+then shoot item after item (each gets its SKU at once), add a note of quick tags and free text, finish
+the tote, and press Create drafts. Claude drafts the items in the background (about $0.10 each with
+Opus); review them on the website's Drafts page as usual. The app signs in with a name and password
+once and keeps a token; changing someone's password or turning their account off ends it.
+
 ## Commands
 
 | Command | What it does |
@@ -287,7 +296,11 @@ ebay/sold_extract.js  browser script that reads an eBay sold-search page
 ebay/orders.py      order sync (Fulfillment API) and the pick list
 ebay/drafts.py      drafts in the database: load, save (with edit conflicts), import/export drafts.json
 ebay/sales.py       sales numbers
+ebay/drafter.py     drafts one item with the Claude API (photos plus the whiteboard or the app's note)
+ebay/capture.py     the phone app's camera flow: a batch per tote, items with photos and notes
+ebay/jobs.py        background jobs: Create drafts runs the drafter over finished app batches
 web/                Flask web app: routes in __init__.py, templates/, static/
+web/api.py          the JSON API for the phone apps (docs/API.md)
 ```
 
 ## eBay quirks worth knowing

@@ -45,7 +45,14 @@ Real inventory and order history are loaded (see `cli.py items`, `cli.py sales`)
 (JSON per SKU). Photos uploaded in the web app land in `inbox/<tote>-<date>/` (numbered in upload
 order; `batches.source = 'upload'`). Drafting one means: split at the whiteboard divider photos, write
 `batches/<batch>/drafts.json` plus `batches/<batch>/photos/`, then `cli.py import-drafts <batch>`. The Claude API drafter (`ebay/drafter.py`) is tested (Opus 5.5 is best, about
-$0.10/item) but not wired into a real workflow yet.
+$0.10/item).
+
+The phone app API (`web/api.py`, documented in `docs/API.md`) covers everything the website does. The website
+and the API share the logic for changes (`item_action`, `edit_changes`, `count_tote`, `ship`, `change_user`,
+`attention`, `data_checks` in `web/__init__.py`); put new logic there, not in a route, so they can't drift.
+App batches (`batches.source = 'app'`, `ebay/capture.py`) hold items shot one by one with a typed note instead
+of the whiteboard. Create drafts (`ebay/jobs.py`) is the one thing that spends Claude money: it runs only when a
+lister or admin starts it, at most 300 items a job. Tests fake the drafter (`JOBS_INLINE` runs jobs inline).
 
 Order sync (`orders.sync`, the "Get new orders from eBay" button) only reads orders: a new sale lowers the
 item's `quantity` (units still listed) and at 0 the item becomes BOUGHT. It never notices ended listings;
