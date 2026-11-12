@@ -71,15 +71,34 @@ belong to their item from the moment they're taken, so nothing has to be split o
 
 | Method | Path | What |
 |---|---|---|
-| POST | /batches | *planned* `{"tote": "A5"}` (or `{"tote": null}` for the next free tote) -> batch |
-| POST | /batches/{id}/items | *planned* Start the next item; it gets its SKU now, so a sticker can be printed |
-| PUT | /batches/{id}/items/{sku}/photos/{client_id} | *planned* Upload one photo. `client_id` is a UUID the phone makes, so a retry from the offline queue never duplicates |
-| PATCH | /batches/{id}/items/{sku} | *planned* `{"note": "not working"}` (replaces the whiteboard), photo order, delete |
-| POST | /batches/{id}/finish | *planned* The tote is done |
+| POST | /batches | `{"tote": "A5"}` (or no tote for the next free one) -> 201 `{"batch": ...}` |
+| GET | /batches | Batches shot in the app, newest first; `?open=1` for ones not finished |
+| GET | /batches/{id} | One batch with its items in shooting order |
+| POST | /batches/{id}/items | Start the next item -> 201 `{"sku": "MV-00931", "batch": ...}`. The SKU is fixed now, so a sticker can be printed; a deleted item's SKU is never reused |
+| PUT | /batches/{id}/items/{sku}/photos/{client_id} | Upload one photo: the body is the image (`Content-Type` `image/jpeg`, `image/png` or `image/heic`), or multipart with a `photo` field. `client_id` is 8-64 letters, digits or dashes (a UUID), so a retry from the offline queue never duplicates: 201 when added, 200 when it was already there. Max 30 MB |
+| DELETE | /batches/{id}/items/{sku}/photos/{client_id} | Remove one photo |
+| PATCH | /batches/{id}/items/{sku} | `{"note": {...}}` and/or `{"photos": [...]}` (all of the item's photo files, in the new order) |
+| DELETE | /batches/{id}/items/{sku} | Drop an item started by mistake (kept as SKIPPED for the record) |
+| POST | /batches/{id}/finish | The tote is done: no new items, but its items can still be fixed until they're drafted |
+| GET | /note-tags | `{"recent": [...], "standard": [...]}`: this person's most used tags, then the standard list |
+| GET | /photos/{batch}/{file} | A photo (the `url` given with each photo; needs the token) |
 | POST | /batches/drafts | *planned* `{"batches": [3, 4]}` Create drafts with Claude in the background -> job |
 | GET | /jobs/{id} | *planned* Progress: `{"done": 12, "total": 40, "errors": [...]}` |
-| GET | /batches, /batches/{id} | *planned* Batches and their drafts, for review |
 | PATCH | /drafts/{sku} | *planned* Edit a draft (with `version`, like the website, so two editors can't overwrite each other) |
+
+A batch looks like:
+
+```
+{"id": 41, "name": "A5-20261111", "tote": "A5", "source": "app", "created_at": "...", "finished_at": null,
+ "items": [{"sku": "MV-00931", "position": 0, "drafted": false,
+            "photos": [{"file": "MV-00931-3f2a....jpg", "url": "/api/v1/photos/A5-20261111/MV-00931-3f2a....jpg"}],
+            "note": {"tags": ["Untested", "Has original box"], "text": "chip on the base"}}]}
+```
+
+The note replaces the whiteboard. Tags and text are both passed to Claude as written, so they may
+overlap or say anything (up to 20 tags of 60 characters, and 4000 characters of text). Any item can be
+changed (photos added, removed or reordered, note rewritten) at any time until its draft is created;
+that's what lets the app swipe back to an earlier item.
 
 ## Reports and people
 

@@ -169,6 +169,10 @@ MIGRATIONS = [
         revoked_at TEXT
     );
     """,
+    """
+    -- Batches shot in the phone app are open until someone finishes the tote (see ebay/capture.py).
+    ALTER TABLE batches ADD COLUMN finished_at TEXT;
+    """,
 ]
 
 

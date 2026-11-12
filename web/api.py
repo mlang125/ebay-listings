@@ -7,12 +7,14 @@ so the API needs no CSRF token.
 
 import functools
 import hashlib
+import os
+import re
 import secrets
 
-from flask import Blueprint, g, jsonify, request
+from flask import Blueprint, g, jsonify, request, send_from_directory, url_for
 from werkzeug.security import check_password_hash
 
-from ebay import db
+from ebay import capture, db
 
 from . import (ITEMS_SQL, ITEM_SORTS, MAX_FAILED_SIGN_INS, LOCKOUT_MINUTES, TOTE_SORTS, _item_filters, _parse_json,
                _password_mark, _sku, order_by, sign_in_failures)
@@ -188,3 +190,117 @@ def tote(code):
     rows = g.conn.execute(ITEMS_SQL + " WHERE l.code = ? AND i.status NOT IN (?, ?) ORDER BY i.sku",
                           (code, *db.GONE)).fetchall()
     return jsonify({"tote": dict(place), "items": [_item_json(r) for r in rows]})
+
+
+# --- capture (the camera flow) ---
+
+def _batch_json(conn, batch_id):
+    b = capture.batch_row(conn, batch_id)
+    return {"id": b["id"], "name": b["name"], "tote": b["tote"], "source": b["source"], "created_at": b["created_at"],
+            "finished_at": b["finished_at"], "items": [
+                {**i, "photos": [{"file": p, "url": url_for("api.photo", batch=b["name"], filename=p)} for p in i["photos"]]}
+                for i in capture.items(conn, batch_id)]}
+
+
+def _capture_call(fn, *args, **kwargs):
+    """Run a capture change in a transaction; turn its refusals into API errors."""
+    try:
+        with g.conn:
+            return fn(g.conn, *args, **kwargs), None
+    except LookupError as e:
+        return None, error(404, str(e.args[0]))
+    except ValueError as e:  # CaptureError, and a bad tote code
+        return None, error(400, str(e))
+
+
+@blueprint.route("/batches", methods=["POST"])
+@token_required
+def batch_start():
+    batch_id, err = _capture_call(capture.start_batch, _body().get("tote"), g.user["id"], batches_dir=g.batches_dir)
+    return err or (jsonify({"batch": _batch_json(g.conn, batch_id)}), 201)
+
+
+@blueprint.route("/batches")
+@token_required
+def batch_list():
+    """Batches shot in the app, newest first; `?open=1` for ones still being shot."""
+    sql = ("SELECT b.id FROM batches b WHERE b.source = 'app'"
+           + (" AND b.finished_at IS NULL" if request.args.get("open") else "") + " ORDER BY b.id DESC LIMIT 100")
+    return jsonify({"batches": [_batch_json(g.conn, r["id"]) for r in g.conn.execute(sql)]})
+
+
+@blueprint.route("/batches/<int:batch_id>")
+@token_required
+def batch_get(batch_id):
+    try:
+        return jsonify({"batch": _batch_json(g.conn, batch_id)})
+    except LookupError as e:
+        return error(404, str(e))
+
+
+@blueprint.route("/batches/<int:batch_id>/items", methods=["POST"])
+@token_required
+def capture_new_item(batch_id):
+    sku, err = _capture_call(capture.new_item, batch_id, g.user["id"])
+    return err or (jsonify({"sku": sku, "batch": _batch_json(g.conn, batch_id)}), 201)
+
+
+@blueprint.route("/batches/<int:batch_id>/items/<sku>", methods=["PATCH"])
+@token_required
+def capture_update_item(batch_id, sku):
+    body = _body()
+    _, err = _capture_call(capture.update_item, batch_id, _sku(sku), g.user["id"],
+                           note=body.get("note"), photos=body.get("photos"))
+    return err or jsonify({"batch": _batch_json(g.conn, batch_id)})
+
+
+@blueprint.route("/batches/<int:batch_id>/items/<sku>", methods=["DELETE"])
+@token_required
+def capture_delete_item(batch_id, sku):
+    _, err = _capture_call(capture.delete_item, batch_id, _sku(sku), g.user["id"], batches_dir=g.batches_dir)
+    return err or ("", 204)
+
+
+@blueprint.route("/batches/<int:batch_id>/items/<sku>/photos/<client_id>", methods=["PUT"])
+@token_required
+def capture_photo(batch_id, sku, client_id):
+    """The photo is the request body (Content-Type image/jpeg, image/png or image/heic), or a
+    multipart field named `photo`. Sending the same client_id again is harmless."""
+    upload = request.files.get("photo")
+    content_type, data = (upload.mimetype, upload.read()) if upload else (request.content_type, request.get_data())
+    result, err = _capture_call(capture.add_photo, batch_id, _sku(sku), client_id, content_type, data, g.user["id"],
+                                 batches_dir=g.batches_dir)
+    if err:
+        return err
+    filename, added = result
+    return jsonify({"file": filename, "added": added}), 201 if added else 200
+
+
+@blueprint.route("/batches/<int:batch_id>/items/<sku>/photos/<client_id>", methods=["DELETE"])
+@token_required
+def capture_delete_photo(batch_id, sku, client_id):
+    _, err = _capture_call(capture.delete_photo, batch_id, _sku(sku), client_id, g.user["id"],
+                           batches_dir=g.batches_dir)
+    return err or ("", 204)
+
+
+@blueprint.route("/batches/<int:batch_id>/finish", methods=["POST"])
+@token_required
+def capture_finish(batch_id):
+    _, err = _capture_call(capture.finish_batch, batch_id, g.user["id"])
+    return err or jsonify({"batch": _batch_json(g.conn, batch_id)})
+
+
+@blueprint.route("/note-tags")
+@token_required
+def note_tags():
+    """Quick choices for an item's note: this person's most used first, then the standard list."""
+    return jsonify({"recent": capture.recent_tags(g.conn, g.user["id"]), "standard": capture.NOTE_TAGS})
+
+
+@blueprint.route("/photos/<batch>/<filename>")
+@token_required
+def photo(batch, filename):
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", batch):
+        return error(404, "No such photo.")
+    return send_from_directory(os.path.join(g.batches_dir, batch, "photos"), filename)

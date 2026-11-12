@@ -587,6 +587,65 @@ check(c.post("/users", data={"csrf": tok, "action": "password", "name": "apiuser
 assert api_c.get("/api/v1/me", headers={"Authorization": "Bearer " + au_tok}).status_code == 401, "a new password ends app sign-ins"
 H = {"Authorization": "Bearer " + api_c.post("/api/v1/auth/token", json={"name": "matt", "password": "testpass123"}).get_json()["token"]}
 
+# --- API: the camera flow (a tote shot item by item) ---
+r = api_c.post("/api/v1/batches", headers=H, json={"tote": "Q9"})
+assert r.status_code == 201, r.data
+cb = r.get_json()["batch"]; cbid = cb["id"]
+assert cb["tote"] == "Q9" and cb["source"] == "app" and cb["items"] == [] and cb["finished_at"] is None
+assert api_c.post("/api/v1/batches", headers=H, json={"tote": "not a tote"}).status_code == 400
+nb = api_c.post("/api/v1/batches", headers=H, json={}).get_json()["batch"]
+assert nb["tote"], "no tote given: the next free one"
+r = api_c.post("/api/v1/batches/%d/items" % cbid, headers=H); assert r.status_code == 201, r.data
+sku1 = r.get_json()["sku"]
+sku2 = api_c.post("/api/v1/batches/%d/items" % cbid, headers=H).get_json()["sku"]
+assert sku1 != sku2 and sku1.startswith("MV-")
+JPG = b"\xff\xd8\xff\xe0fakejpeg"
+PH = "/api/v1/batches/%d/items/%s/photos/%s"
+r = api_c.put(PH % (cbid, sku1, "aaaaaaaa-1"), headers={**H, "Content-Type": "image/jpeg"}, data=JPG)
+assert r.status_code == 201 and r.get_json()["added"], r.data
+r = api_c.put(PH % (cbid, sku1, "aaaaaaaa-1"), headers={**H, "Content-Type": "image/jpeg"}, data=JPG)
+assert r.status_code == 200 and not r.get_json()["added"], "a retried upload is not a second photo"
+from io import BytesIO
+r = api_c.put(PH % (cbid, sku2, "bbbbbbbb-1"), headers=H,
+              data={"photo": (BytesIO(JPG), "x.jpg", "image/jpeg")}, content_type="multipart/form-data")
+assert r.status_code == 201, r.data
+assert api_c.put(PH % (cbid, sku2, "short"), headers={**H, "Content-Type": "image/jpeg"}, data=JPG).status_code == 400
+assert api_c.put(PH % (cbid, sku2, "cccccccc-1"), headers={**H, "Content-Type": "text/plain"}, data=b"hi").status_code == 400
+# swipe back to item 1: another photo, a note, a new order
+api_c.put(PH % (cbid, sku1, "aaaaaaaa-2"), headers={**H, "Content-Type": "image/png"}, data=b"\x89PNGfake")
+r = api_c.patch("/api/v1/batches/%d/items/%s" % (cbid, sku1), headers=H, json={
+    "note": {"tags": ["Untested", "Has original box"], "text": "Not tested; chip on the base. 'quotes' & <tags> are fine"},
+    "photos": [sku1 + "-aaaaaaaa-2.png", sku1 + "-aaaaaaaa-1.jpg"]})
+assert r.status_code == 200, r.data
+it1 = r.get_json()["batch"]["items"][0]
+assert it1["sku"] == sku1 and [p["file"] for p in it1["photos"]] == [sku1 + "-aaaaaaaa-2.png", sku1 + "-aaaaaaaa-1.jpg"]
+assert it1["note"]["tags"] == ["Untested", "Has original box"] and "<tags>" in it1["note"]["text"]
+assert api_c.patch("/api/v1/batches/%d/items/%s" % (cbid, sku1), headers=H, json={"photos": []}).status_code == 400
+photo_url = it1["photos"][1]["url"]
+assert api_c.get(photo_url, headers=H).data == JPG
+assert api_c.get(photo_url).status_code == 401, "photos need a token too"
+assert os.path.exists(os.path.join(S, "batches", cb["name"], "photos", sku1 + "-aaaaaaaa-1.jpg")), "photos go in the app's batches folder"
+assert api_c.delete(PH % (cbid, sku1, "aaaaaaaa-2"), headers=H).status_code == 204
+# an item started by mistake
+sku3 = api_c.post("/api/v1/batches/%d/items" % cbid, headers=H).get_json()["sku"]
+assert api_c.delete("/api/v1/batches/%d/items/%s" % (cbid, sku3), headers=H).status_code == 204
+cdb = db.connect(S + "/ebay.db"); assert cdb.execute("SELECT status FROM items WHERE sku = ?", (sku3,)).fetchone()[0] == "SKIPPED"
+row = cdb.execute("SELECT i.status, l.code FROM items i JOIN locations l ON l.id = i.location_id WHERE sku = ?", (sku1,)).fetchone()
+assert tuple(row) == ("PENDING", "Q9"), tuple(row)
+assert cdb.execute("SELECT user_id FROM events WHERE entity_id = ? ORDER BY id LIMIT 1", (sku1,)).fetchone()[0] == 1, "who started it"
+cdb.close()
+r = api_c.post("/api/v1/batches/%d/finish" % cbid, headers=H).get_json()["batch"]
+assert r["finished_at"] and [i["sku"] for i in r["items"]] == [sku1, sku2]
+assert api_c.post("/api/v1/batches/%d/items" % cbid, headers=H).status_code == 400, "a finished tote takes no new items"
+assert api_c.patch("/api/v1/batches/%d/items/%s" % (cbid, sku2), headers=H, json={"note": {"tags": ["Untested"]}}).status_code == 200, \
+    "but its items can still be fixed until they're drafted"
+open_ids = [b["id"] for b in api_c.get("/api/v1/batches?open=1", headers=H).get_json()["batches"]]
+assert nb["id"] in open_ids and cbid not in open_ids
+assert api_c.get("/api/v1/batches/999999", headers=H).status_code == 404
+assert api_c.post("/api/v1/batches/999999/items", headers=H).status_code == 404
+tags = api_c.get("/api/v1/note-tags", headers=H).get_json()
+assert tags["recent"][0] == "Untested" and "Tested, works" in tags["standard"]
+
 # --- nav shows where you are ---
 for page, label in [("/items", "Items"), ("/items/MV-00005", "Items"), ("/totes", "Totes"), ("/picklist", "Pick list"), ("/checks", "Checks")]:
     current = re.findall(r'aria-current="page">([^<]+)<', c.get(page).get_data(as_text=True))
