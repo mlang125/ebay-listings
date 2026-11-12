@@ -60,12 +60,19 @@ APPS = {
     },
 }
 
+# What `cli.py login` asks eBay for. Refreshing uses the scopes granted at the last login (see auth.py),
+# so adding one here only takes effect after the next login.
 SCOPES = [
     "https://api.ebay.com/oauth/api_scope",
-    "https://api.ebay.com/oauth/api_scope/sell.inventory",
+    "https://api.ebay.com/oauth/api_scope/sell.inventory",  # also the Negotiation API (offers to watchers)
     "https://api.ebay.com/oauth/api_scope/sell.account",
     "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
+    "https://api.ebay.com/oauth/api_scope/sell.marketing",  # markdown sales, volume pricing, coupons
+    "https://api.ebay.com/oauth/api_scope/sell.finances",  # fees and label costs, for profit per item and trip
+    "https://api.ebay.com/oauth/api_scope/sell.analytics.readonly",  # views and impressions per listing
 ]
+# Granted before scopes were recorded at login.
+FIRST_SCOPES = SCOPES[:4]
 
 MARKETPLACE_ID = "EBAY_US"
 

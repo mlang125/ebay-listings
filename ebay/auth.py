@@ -18,6 +18,16 @@ def _refresh_account():
     return config.ENV + "-refresh-token"
 
 
+def _scopes_account():
+    return config.ENV + "-scopes"
+
+
+def granted_scopes():
+    """The scopes the stored refresh token was granted. A refresh may ask for those, never more."""
+    saved = keychain.get(_scopes_account())
+    return saved.split() if saved else list(config.FIRST_SCOPES)
+
+
 def _basic_auth_header():
     cert_id = keychain.get(_cert_account())
     if not cert_id:
@@ -71,6 +81,8 @@ def login(pasted):
         }
     )
     keychain.put(_refresh_account(), tokens["refresh_token"])
+    keychain.put(_scopes_account(), " ".join(config.SCOPES))
+    _cache["token"] = None
     days = tokens.get("refresh_token_expires_in", 0) // 86400
     return days
 
@@ -88,7 +100,7 @@ def access_token():
         {
             "grant_type": "refresh_token",
             "refresh_token": refresh,
-            "scope": " ".join(config.SCOPES),
+            "scope": " ".join(granted_scopes()),
         }
     )
     _cache["token"] = tokens["access_token"]
