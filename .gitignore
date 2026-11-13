@@ -17,3 +17,6 @@ __pycache__/
 
 # Stray downloads
 *.dmg
+
+# Printed pages (pick lists, labels) hold business data
+docs/*.pdf
