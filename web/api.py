@@ -610,7 +610,7 @@ def users_change():
 def _batch_json(conn, batch_id):
     b = capture.batch_row(conn, batch_id)
     return {"id": b["id"], "name": b["name"], "tote": b["tote"], "source": b["source"], "created_at": b["created_at"],
-            "finished_at": b["finished_at"], "items": [
+            "finished_at": b["finished_at"], "note": capture.batch_note(b), "items": [
                 {**i, "photos": [{"file": p, "url": url_for("api.photo", batch=b["name"], filename=p)} for p in i["photos"]]}
                 for i in capture.items(conn, batch_id)]}
 
@@ -649,6 +649,18 @@ def batch_get(batch_id):
         return jsonify({"batch": _batch_json(g.conn, batch_id)})
     except LookupError as e:
         return error(404, str(e))
+
+
+@blueprint.route("/batches/<int:batch_id>", methods=["PATCH"])
+@token_required
+def batch_update(batch_id):
+    """{"note": {"tags": [...], "text": "..."}}: the tote note, for every item in the batch (an item's own
+    note wins where they disagree). Read when items are drafted; already drafted items keep their draft."""
+    note = _body().get("note")
+    if note is None:
+        return error(400, "Send the tote note.")
+    _, err = _capture_call(capture.set_batch_note, batch_id, note, g.user["id"])
+    return err or jsonify({"batch": _batch_json(g.conn, batch_id)})
 
 
 @blueprint.route("/batches/<int:batch_id>/items", methods=["POST"])

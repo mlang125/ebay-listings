@@ -151,12 +151,14 @@ struct ShootView: View {
     @State var batch: Batch
     @State private var current: String?
     @State private var noteFor: CaptureItem?
+    @State private var editingToteNote = false
     @State private var problem: String?
     @State private var flash = false
     @State private var confirmFinish = false
     @State private var picked: [PhotosPickerItem] = []
 
     var currentItem: CaptureItem? { batch.items.first { $0.sku == current } }
+    var hasToteNote: Bool { !(batch.note?.tags.isEmpty ?? true) || !(batch.note?.text.isEmpty ?? true) }
     var finished: Bool { batch.finishedAt != nil }
 
     var body: some View {
@@ -172,7 +174,10 @@ struct ShootView: View {
                     HStack {
                         Button("Done") { dismiss() }.buttonStyle(.borderedProminent).tint(.black.opacity(0.6))
                         Spacer()
-                        Text("Tote \(batch.tote ?? "?")").bold().padding(8).background(.black.opacity(0.6)).foregroundStyle(.white).clipShape(Capsule())
+                        Button { editingToteNote = true } label: {
+                            Label("Tote \(batch.tote ?? "?")", systemImage: hasToteNote ? "note.text" : "square.and.pencil")
+                                .bold().padding(8).background(.black.opacity(0.6)).foregroundStyle(.white).clipShape(Capsule())
+                        }.accessibilityHint("Tote note: one note for every item in this tote")
                         Spacer()
                         Button("Complete tote") { confirmFinish = true }.buttonStyle(.borderedProminent).tint(.green)
                             .disabled(finished || batch.items.isEmpty)
@@ -205,7 +210,22 @@ struct ShootView: View {
         .onDisappear { camera.stop() }
         .onChange(of: uploads.uploaded) { Task { await reload() } }
         .onChange(of: picked) { Task { await addPicked() } }
-        .sheet(item: $noteFor) { item in NoteSheet(batchId: batch.id, item: item) { updated in batch = updated } }
+        .sheet(item: $noteFor) { item in
+            NoteSheet(title: item.sku, note: item.note,
+                      footer: hasToteNote ? "The tote note applies too; this note wins where they disagree." : nil) { note in
+                let r: BatchReply = try await API.shared.send("PATCH", "/batches/\(batch.id)/items/\(API.part(item.sku))",
+                                                              ["note": ["tags": note.tags, "text": note.text]])
+                batch = r.batch
+            }
+        }
+        .sheet(isPresented: $editingToteNote) {
+            NoteSheet(title: "Tote \(batch.tote ?? "")", note: batch.note ?? Note(tags: [], text: ""),
+                      placeholder: "What most of this tote is, e.g. \"all sealed Funko Pops\"",
+                      footer: "For every item in this tote. An item's own note wins where they disagree. Items already drafted keep their drafts.") { note in
+                let r: BatchReply = try await API.shared.send("PATCH", "/batches/\(batch.id)", ["note": ["tags": note.tags, "text": note.text]])
+                batch = r.batch
+            }
+        }
         .confirmationDialog("Complete tote \(batch.tote ?? "")?", isPresented: $confirmFinish, titleVisibility: .visible) {
             Button("Complete tote (\(batch.items.count) items)") { Task { await finish() } }
         } message: { Text("No new items after this, but you can still fix photos and notes until it's drafted.") }
@@ -346,14 +366,17 @@ struct ItemPage: View {
     }
 }
 
-/// The note that replaces the whiteboard: quick tags (this person's usual ones first) and free text.
-/// Claude reads both as written, so they can say the same thing or anything at all.
+/// A note: quick tags (this person's usual ones first) and free text. Used for an item's note (it
+/// replaces the whiteboard) and for the tote note. Claude reads both as written, so they can say the same
+/// thing or anything at all. `save` sends it; the sheet closes when that works.
 struct NoteSheet: View {
     @EnvironmentObject var session: Session
     @Environment(\.dismiss) private var dismiss
-    let batchId: Int
-    let item: CaptureItem
-    let saved: (Batch) -> Void
+    let title: String
+    let note: Note
+    var placeholder = "Anything: what it is, what's wrong, what's missing"
+    var footer: String? = nil
+    let save: (Note) async throws -> Void
     @State private var tags: [String] = []
     @State private var text = ""
     @State private var choices: [String] = []
@@ -372,34 +395,32 @@ struct NoteSheet: View {
                         }
                     }
                 }
-                Section("Note") {
-                    TextField("Anything: what it is, what's wrong, what's missing", text: $text, axis: .vertical)
+                Section {
+                    TextField(placeholder, text: $text, axis: .vertical)
                         .lineLimit(3...8).focused($typing)
-                }
+                } header: { Text("Note") } footer: { if let footer { Text(footer) } }
             }
-            .navigationTitle(item.sku)
+            .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button("Save") { Task { await save() } } }
+                ToolbarItem(placement: .confirmationAction) { Button("Save") { Task { await send() } } }
             }
             .task {
-                tags = item.note.tags
-                text = item.note.text
+                tags = note.tags
+                text = note.text
                 if let r = try? await API.shared.get("/note-tags", as: NoteTags.self) {
                     var seen = Set<String>()
-                    choices = (r.recent + r.standard + item.note.tags).filter { seen.insert($0).inserted }
+                    choices = (r.recent + r.standard + note.tags).filter { seen.insert($0).inserted }
                 }
             }
         }
         .presentationDetents([.medium, .large])
     }
 
-    func save() async {
+    func send() async {
         problem = await session.run {
-            let r: BatchReply = try await API.shared.send("PATCH", "/batches/\(batchId)/items/\(API.part(item.sku))",
-                                                          ["note": ["tags": tags, "text": text]])
-            saved(r.batch)
+            try await save(Note(tags: tags, text: text))
             dismiss()
         }
     }

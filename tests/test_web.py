@@ -567,6 +567,20 @@ assert "standing assumptions (ASSUMPTIONS.md):\n- Working" in n and "CHECKLIST" 
 open(notes_dir + "/CHECKLIST.md", "w").write("- Say: see photos\n")
 assert "checklist (CHECKLIST.md):\n- Say: see photos" in drafter.seller_notes(notes_dir)
 
+# what the real drafter sends (Claude stubbed: it stops before any request)
+class Sent(Exception): pass
+class StubClaude:
+    def __init__(self): self.messages, self.sent = self, []
+    def stream(self, **kw): self.sent.append(kw); raise Sent()
+stub = StubClaude()
+try:
+    drafter.draft(stub, "claude-opus-5-5", None, [], note="Chip on lid", tote_note="All teapots")
+except Sent:
+    pass
+texts = [b["text"] for b in stub.sent[0]["messages"][0]["content"] if b["type"] == "text"]
+assert texts[0].startswith("The tote note") and texts[0].endswith("All teapots") and "Chip on lid" in texts[1], texts
+assert "tote note" in stub.sent[0]["system"] and "ASSUMPTIONS.md" in stub.sent[0]["system"]
+
 # --- listing check (eBay faked) ---
 reply = ET.fromstring("""<GetMyeBaySellingResponse xmlns="urn:ebay:apis:eBLBaseComponents"><Ack>Success</Ack><ActiveList>
   <ItemArray><Item><ItemID>111</ItemID><SKU>MV-1</SKU><Title>A</Title><QuantityAvailable>2</QuantityAvailable></Item>
@@ -820,8 +834,9 @@ assert tags["recent"][0] == "Untested" and "Tested, works" in tags["standard"]
 
 # --- API: Create drafts (Claude faked; runs inline instead of in a thread) ---
 drafted_calls = []
-def fake_draft(claude, model, divider, photos, tote=None, effort="medium", note=None):
+def fake_draft(claude, model, divider, photos, tote=None, effort="medium", note=None, tote_note=None):
     drafted_calls.append((model, [os.path.basename(p) for p in photos], note))
+    tote_notes.append(tote_note)
     if "bbbbbbbb" in photos[0] and len(drafted_calls) < 3:
         raise RuntimeError("Claude stopped early (max_tokens)")
     return ({"whiteboard_notes": note, "title": "Drafted " + os.path.basename(photos[0])[:8], "condition": "USED_GOOD",
@@ -829,6 +844,18 @@ def fake_draft(claude, model, divider, photos, tote=None, effort="medium", note=
              "drafted_by": {"model": model, "cost_usd": 0.1}}, {"model": model, "cost_usd": 0.1})
 drafter.draft, drafter.client = fake_draft, lambda: "fake claude"
 app.config["JOBS_INLINE"] = True
+tote_notes = []
+# the tote note: written once for the whole batch, handed to the drafter with every item
+TB = "/api/v1/batches/%d" % cbid
+assert api_c.patch(TB, headers=H, json={}).status_code == 400
+assert api_c.patch(TB, headers=H, json={"note": "just text"}).status_code == 400
+assert api_c.patch(TB, headers=H, json={"note": {"tags": [1]}}).status_code == 400
+assert api_c.get(TB, headers=H).get_json()["batch"]["note"] == {"tags": [], "text": ""}
+r = api_c.patch(TB, headers=H, json={"note": {"tags": ["Sealed"], "text": "All Funko Pops, 2019"}})
+assert r.status_code == 200 and r.get_json()["batch"]["note"] == {"tags": ["Sealed"], "text": "All Funko Pops, 2019"}, r.data
+assert api_c.patch("/api/v1/batches/999999", headers=H, json={"note": {"text": "x"}}).status_code == 404
+ev = fresh().execute("select user_id, data from events where action = 'tote_note' order by id desc").fetchone()
+assert ev[0] == 1 and json.loads(ev[1])["note"] == "Sealed\nAll Funko Pops, 2019", ev
 assert api_c.post("/api/v1/batches/drafts", headers=H, json={"batches": [nb["id"]]}).status_code == 400, "finish the tote first"
 assert api_c.post("/api/v1/batches/drafts", headers=H, json={"batches": [999999]}).status_code == 404
 assert api_c.post("/api/v1/batches/drafts", headers=H, json={"batches": [cbid], "model": "gpt"}).status_code == 400
@@ -842,6 +869,7 @@ assert r["estimate_usd"] == 0.2 and job["total"] == 2 and job["params"]["model"]
 job = api_c.get("/api/v1/jobs/%d" % job["id"], headers=H).get_json()["job"]
 assert job["status"] == "done" and job["done"] == 2 and [e["sku"] for e in job["errors"]] == [sku2], job
 assert drafted_calls[0] == ("claude-opus-5-5", [sku1 + "-aaaaaaaa-1.jpg"], "Untested; Has original box\nNot tested; chip on the base. 'quotes' & <tags> are fine")
+assert tote_notes and set(tote_notes) == {"Sealed\nAll Funko Pops, 2019"}, tote_notes
 items_now = {i["sku"]: i for i in api_c.get("/api/v1/batches/%d" % cbid, headers=H).get_json()["batch"]["items"]}
 assert items_now[sku1]["drafted"] and items_now[sku1]["draft"]["title"].startswith("Drafted") and not items_now[sku2]["drafted"]
 assert [p["file"] for p in items_now[sku1]["photos"]] == [sku1 + "-aaaaaaaa-1.jpg"], "the phone's photos are kept"

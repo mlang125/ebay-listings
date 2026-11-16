@@ -86,7 +86,9 @@ def _draft_one(conn, claude, model, sku, batches_dir, user):
     if item.get("drafted_by") or item.get("title"):
         return 0.0  # done already (an earlier, interrupted job)
     photos = [os.path.join(batches_dir, batch_name, "photos", p) for p in item.get("photos", [])]
-    new, run = drafter.draft(claude, model, None, photos, note=capture.note_text(item.get("note")))
+    batch = conn.execute("SELECT note FROM batches WHERE name = ?", (batch_name,)).fetchone()
+    new, run = drafter.draft(claude, model, None, photos, note=capture.note_text(item.get("note")),
+                             tote_note=capture.note_text(capture.batch_note(batch)))
     # Keep what the phone recorded (photos, note); take everything Claude wrote. If the phone changed the
     # item while Claude was working, merge into that newer version rather than overwrite it.
     written = {k: v for k, v in new.items() if k not in ("photos", "note", "captured")}

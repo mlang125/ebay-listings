@@ -190,6 +190,11 @@ MIGRATIONS = [
         finished_at TEXT
     );
     """,
+    """
+    -- The tote note: what the person shooting a tote in the app wrote once for all of its items
+    -- (JSON {"tags", "text"}, like an item's note). An item's own note wins where they disagree.
+    ALTER TABLE batches ADD COLUMN note TEXT;
+    """,
 ]
 
 

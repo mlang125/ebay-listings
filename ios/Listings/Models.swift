@@ -56,6 +56,7 @@ struct Batch: Codable, Identifiable, Equatable {
     let tote: String?
     let createdAt: String
     let finishedAt: String?
+    var note: Note?  // the tote note, for every item in the batch
     var items: [CaptureItem]
 }
 struct BatchReply: Codable { let batch: Batch }

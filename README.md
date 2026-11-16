@@ -131,7 +131,8 @@ Phones get a layout of their own: the top bar stays put, item lists turn into ca
 The phone apps (iOS first) talk to the same server through a JSON API at `/api/v1`, described in
 [docs/API.md](docs/API.md). Everything the website does is there, plus the camera flow: pick a tote,
 then shoot item after item (each gets its SKU at once), add a note of quick tags and free text, finish
-the tote, and press Create drafts. Claude drafts the items in the background (about $0.10 each with
+the tote, and press Create drafts. Tap the tote's name while shooting to write a *tote note* once for every
+item in it (handy when a tote is mostly one kind of thing); an item's own note wins where they disagree. Claude drafts the items in the background (about $0.10 each with
 Opus); review them on the website's Drafts page as usual. The app signs in with a name and password
 once and keeps a token; changing someone's password or turning their account off ends it.
 

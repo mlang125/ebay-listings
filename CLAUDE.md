@@ -52,7 +52,8 @@ The phone app API (`web/api.py`, documented in `docs/API.md`) covers everything 
 and the API share the logic for changes (`item_action`, `edit_changes`, `count_tote`, `ship`, `change_user`,
 `attention`, `data_checks` in `web/__init__.py`); put new logic there, not in a route, so they can't drift.
 App batches (`batches.source = 'app'`, `ebay/capture.py`) hold items shot one by one with a typed note instead
-of the whiteboard. Create drafts (`ebay/jobs.py`) is the one thing that spends Claude money: it runs only when a
+of the whiteboard. A batch can also have a tote note (`batches.note`, set in the app) that the drafter
+reads for every item in it; the item's own note wins. Create drafts (`ebay/jobs.py`) is the one thing that spends Claude money: it runs only when a
 lister or admin starts it, at most 300 items a job. Tests fake the drafter (`JOBS_INLINE` runs jobs inline).
 
 Order sync (`orders.sync`, the "Get new orders from eBay" button) only reads orders: a new sale lowers the

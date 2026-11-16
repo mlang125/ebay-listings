@@ -137,16 +137,38 @@ def add_photo(conn, batch_id, sku, client_id, content_type, data, user, batches_
     return filename, True
 
 
+def _clean_note(note):
+    """A note as sent by the app ({"tags": [...], "text": "..."}), checked and trimmed."""
+    if not isinstance(note, dict):
+        raise CaptureError("A note is {tags, text}.")
+    tags = note.get("tags", [])
+    if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
+        raise CaptureError("Note tags must be a list of words.")
+    return {"tags": [t.strip()[:60] for t in tags if t.strip()][:20], "text": str(note.get("text") or "")[:4000]}
+
+
+def batch_note(batch):
+    """The tote note of a batch row, as {"tags", "text"} (empty when there isn't one)."""
+    return json.loads(batch["note"]) if batch["note"] else {"tags": [], "text": ""}
+
+
+def set_batch_note(conn, batch_id, note, user):
+    """Write the tote note: one note for every item in the batch, so a tote that's mostly one kind of
+    thing is described once. Items drafted later read it; ones already drafted aren't redrafted."""
+    batch = _open(conn, batch_id)
+    note = _clean_note(note)
+    if note != batch_note(batch):
+        conn.execute("UPDATE batches SET note = ? WHERE id = ?", (json.dumps(note), batch["id"]))
+        db.log_event(conn, "batch", batch["name"], "tote_note", "api", user, data={"note": note_text(note)})
+    return note
+
+
 def update_item(conn, batch_id, sku, user, note=None, photos=None):
     """Change an item's note ({"tags": [...], "text": "..."}) and/or photo order (a reordering of its photos)."""
     batch = _open(conn, batch_id)
     item = _draft(conn, batch, sku)
     if note is not None:
-        tags = note.get("tags", [])
-        if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
-            raise CaptureError("Note tags must be a list of words.")
-        item["note"] = {"tags": [t.strip()[:60] for t in tags if t.strip()][:20],
-                        "text": str(note.get("text") or "")[:4000]}
+        item["note"] = _clean_note(note)
     if photos is not None:
         if sorted(photos) != sorted(item["photos"]):
             raise CaptureError("To reorder photos, send all of this item's photos (use delete to remove one).")

@@ -82,6 +82,7 @@ belong to their item from the moment they're taken, so nothing has to be split o
 | POST | /batches | `{"tote": "A5"}` (or no tote for the next free one) -> 201 `{"batch": ...}` |
 | GET | /batches | Batches shot in the app, newest first; `?open=1` for ones not finished |
 | GET | /batches/{id} | One batch with its items in shooting order |
+| PATCH | /batches/{id} | `{"note": {"tags": [...], "text": "..."}}` The tote note: written once for every item in the batch, for a tote that's mostly one kind of thing. Each item's own note wins where they disagree. Items drafted afterwards read it -> `{"batch"}` (a batch's JSON includes its `note`) |
 | POST | /batches/{id}/items | Start the next item -> 201 `{"sku": "MV-00931", "batch": ...}`. The SKU is fixed now, so a sticker can be printed; a deleted item's SKU is never reused |
 | PUT | /batches/{id}/items/{sku}/photos/{client_id} | Upload one photo: the body is the image (`Content-Type` `image/jpeg` or `image/png`; convert HEIC first, the drafter can't read it), or multipart with a `photo` field. `client_id` is 8-64 letters, digits or dashes (a UUID), so a retry from the offline queue never duplicates: 201 when added, 200 when it was already there. Max 30 MB |
 | DELETE | /batches/{id}/items/{sku}/photos/{client_id} | Remove one photo |

@@ -75,6 +75,10 @@ instead (quick tags like "Untested" plus anything they typed). Treat it exactly 
 whiteboard: copy it into whiteboard_notes and let it override the photos. Tags and text may \
 repeat each other.
 
+A tote is often mostly one kind of thing, so the app's items may also come with a tote note, \
+written once for every item in the tote. It works like the item's note, except that the item's \
+own note wins wherever the two disagree. Put what applies from it into whiteboard_notes too.
+
 Fields:
 - {TITLE_RULES}
 - condition: one of the enum values. NEW only for sealed, unused items; NEW_OTHER for open box \
@@ -206,16 +210,22 @@ def fit_title(item):
     item["title"] = title
 
 
-def draft(claude, model, divider, photos, tote=None, effort="medium", note=None):
+def draft(claude, model, divider, photos, tote=None, effort="medium", note=None, tote_note=None):
     """Draft one item. `divider` and each photo are paths or open files; `note` is the seller's typed
-    note (the phone app's replacement for the divider photo). Returns (draft, run info)."""
-    content = [{"type": "text", "text": "Divider photo (the whiteboard note for this item):"}]
+    note (the phone app's replacement for the divider photo) and `tote_note` the note for its whole tote.
+    Returns (draft, run info)."""
+    content = []
+    if tote_note:
+        content.append({"type": "text", "text": "The tote note (for every item in this tote; this item's own note "
+                                                "wins where they disagree):\n" + tote_note})
+    content.append({"type": "text", "text": "Divider photo (the whiteboard note for this item):"})
     if divider is not None:
         content.append(_image_block(divider))
     elif note:
-        content[0]["text"] = "The seller's note about this item:\n" + note
+        content[-1]["text"] = "The seller's note about this item:\n" + note
     else:
-        content[0]["text"] = "There is no divider photo for this item."
+        content[-1]["text"] = "There is no divider photo or note for this item." if tote_note else \
+            "There is no divider photo for this item."
     content.append({"type": "text", "text": "Item photos, in listing order:"})
     content += [_image_block(p) for p in photos]
     content.append({"type": "text", "text": "Draft the listing."})
@@ -256,6 +266,8 @@ def draft(claude, model, divider, photos, tote=None, effort="medium", note=None)
         "needs_check": list(out["needs_check"]),
         "category_guess": out["category_guess"],
     }
+    if tote_note:
+        item["tote_note"] = tote_note
     fit_title(item)
     (category_id, category), others = _category(out["category_query"])
     item["category_id"], item["category"] = category_id, category
@@ -315,6 +327,8 @@ def resolve(claude, model, item, answers, effort="low"):
     plus still_open and summary, run info)."""
     current = {k: item.get(k) for k in RESOLVED_FIELDS}
     current["whiteboard_notes"] = item.get("whiteboard_notes") or ""
+    if item.get("tote_note"):
+        current["tote_note"] = item["tote_note"]  # the item's own note (whiteboard_notes) wins over it
     text = ("The draft as it is now (JSON):\n" + json.dumps(current, indent=1) + "\n\nThe person's answers:\n"
             + "\n".join("Q: %s\nA: %s" % qa for qa in answers) + "\n\nRevise the draft.")
     started = time.monotonic()
