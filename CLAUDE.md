@@ -44,7 +44,8 @@ Real inventory and order history are loaded (see `cli.py items`, `cli.py sales`)
 `<letter><number>`; `OT` = other place, `UN` = needs a tote. Drafts live in the `drafts` table
 (JSON per SKU). Photos uploaded in the web app land in `inbox/<tote>-<date>/` (numbered in upload
 order; `batches.source = 'upload'`). Drafting one means: split at the whiteboard divider photos, write
-`batches/<batch>/drafts.json` plus `batches/<batch>/photos/`, then `cli.py import-drafts <batch>`. The Claude API drafter (`ebay/drafter.py`) is tested (Opus 5.5 is best, about
+`batches/<batch>/drafts.json` plus `batches/<batch>/photos/`, then `cli.py import-drafts <batch>`. The drafter also reads the owner's `ASSUMPTIONS.md` and `CHECKLIST.md` (repo root) into its prompt for every
+request (`drafter.seller_notes`); add drafting rules there, not in the code, when they're the owner's preferences. The Claude API drafter (`ebay/drafter.py`) is tested (Opus 5.5 is best, about
 $0.10/item).
 
 The phone app API (`web/api.py`, documented in `docs/API.md`) covers everything the website does. The website

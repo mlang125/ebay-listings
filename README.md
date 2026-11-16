@@ -23,6 +23,9 @@ Run commands with `.venv/bin/python cli.py ...` (or `source .venv/bin/activate` 
 3. **Have Claude draft the batch.** Give Claude the zip and the tote ID (`<letter><number>`, e.g. `T1`).
    Claude splits the photos at each divider and assigns SKUs (`MV-#####`, from `cli.py next-sku`). It writes `batches/<batch>/drafts.json`, copies the
    listing photos into `batches/<batch>/photos/`, and loads the drafts into the database with `cli.py import-drafts <batch>`.
+   The drafter also follows `ASSUMPTIONS.md` (what to assume about every item unless its note says otherwise,
+   like "working") and `CHECKLIST.md` (what every title and description must do). They're read fresh for
+   every draft, so just edit them; no restart needed.
 4. **Price check:** `cli.py comps <batch>`, or *Update estimate* on the website (see [Pricing](#pricing)).
 5. **Review** in the web app: titles, condition, price, and anything listed under `needs_check`.
 6. **Publish:** `cli.py publish <batch> [SKU ...]`. Each published item is

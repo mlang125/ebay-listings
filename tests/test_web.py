@@ -558,6 +558,15 @@ with fresh() as conn:  # put it back for the checks below
 trading.active_listings = lambda: [{"listing_id": "1", "sku": "x", "quantity": 1, "title": "x"}]
 trading.unsold_listings = lambda days=60: []
 
+# --- the seller's drafting notes go into every drafting prompt ---
+notes_dir = S + "/notes"; os.makedirs(notes_dir)
+assert drafter.seller_notes(notes_dir) == "", "no files, no notes"
+open(notes_dir + "/ASSUMPTIONS.md", "w").write("- Working\n")
+n = drafter.seller_notes(notes_dir)
+assert "standing assumptions (ASSUMPTIONS.md):\n- Working" in n and "CHECKLIST" not in n, n
+open(notes_dir + "/CHECKLIST.md", "w").write("- Say: see photos\n")
+assert "checklist (CHECKLIST.md):\n- Say: see photos" in drafter.seller_notes(notes_dir)
+
 # --- listing check (eBay faked) ---
 reply = ET.fromstring("""<GetMyeBaySellingResponse xmlns="urn:ebay:apis:eBLBaseComponents"><Ack>Success</Ack><ActiveList>
   <ItemArray><Item><ItemID>111</ItemID><SKU>MV-1</SKU><Title>A</Title><QuantityAvailable>2</QuantityAvailable></Item>

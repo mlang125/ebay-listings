@@ -13,11 +13,18 @@ import io
 import json
 import time
 import urllib.parse
+from pathlib import Path
 
 import anthropic
 from PIL import Image, ImageOps
 
 from . import api, keychain
+
+# The seller's own drafting notes, read fresh for every request so editing the files is all it takes.
+# ASSUMPTIONS.md: what to assume about every item unless its note says otherwise (working, complete...).
+# CHECKLIST.md: what every title and description must do. Either file may be missing.
+NOTES_DIR = Path(__file__).resolve().parent.parent
+NOTES = (("ASSUMPTIONS.md", "The seller's standing assumptions"), ("CHECKLIST.md", "The seller's checklist"))
 
 MODELS = {
     "opus": "claude-opus-5-5",
@@ -75,10 +82,10 @@ or unused without original packaging; USED_EXCELLENT is eBay's general "Pre-owne
 FOR_PARTS_OR_NOT_WORKING when it's broken or the whiteboard says so. Look for shrink wrap, \
 factory tape or seals: intact ones mean NEW; if you can't tell whether it's sealed, ask.
 - condition_description: one or two plain sentences on the actual condition: wear, flaws, \
-what's missing, whether it was tested. Only what the photos or whiteboard show.
+what's missing, whether it works. Base it on the photos, the seller's standing assumptions and \
+the seller's note (the note overrides the assumptions).
 - description: a short paragraph on what the item is (from labels, tags and packaging you can \
-read), then a paragraph on condition ending with "See photos." Plain text, no headings, no \
-marketing claims you can't see.
+read), then a paragraph on condition. Plain text, no headings, no marketing claims you can't see.
 - aspects: eBay item specifics as name/values pairs, using eBay's usual names (Brand, Model, \
 Type, Color, Material, Size, Character, Franchise, Platform, MPN, Country of Origin, ...). \
 Include only values you can read or clearly see; put "Unbranded" for Brand only when there is \
@@ -93,8 +100,10 @@ based on what this sells for used on eBay. A person checks it against real sales
 - package: shipping weight in ounces (item plus packing) and box size in inches. Estimate \
 from the item's apparent size; close is good enough.
 - needs_check: short questions a person must answer before listing: things that affect value \
-or accuracy that the photos don't settle (does it work, is a part missing, which edition, \
-measurements you guessed). Empty if nothing is uncertain.""".replace("{TITLE_RULES}", TITLE_RULES)
+or accuracy that the photos, the note and the standing assumptions don't settle (which edition, \
+measurements you guessed). Never ask about something an assumption already answers (e.g. \
+whether it works) unless the photos or note give a real reason to doubt it. Empty if nothing \
+is uncertain.""".replace("{TITLE_RULES}", TITLE_RULES)
 
 SCHEMA = {
     "type": "object",
@@ -129,6 +138,23 @@ SCHEMA = {
                  "category_query", "category_guess", "comp_query", "price_guess", "package", "needs_check"],
     "additionalProperties": False,
 }
+
+
+def seller_notes(folder=None):
+    """ASSUMPTIONS.md and CHECKLIST.md as one block for the system prompt ("" if neither exists)."""
+    parts = []
+    for name, heading in NOTES:
+        try:
+            text = (Path(folder or NOTES_DIR) / name).read_text().strip()
+        except FileNotFoundError:
+            continue
+        if text:
+            parts.append("%s (%s):\n%s" % (heading, name, text))
+    if not parts:
+        return ""
+    return ("\n\nThe seller wrote these notes for every draft. Follow them. The standing assumptions hold for \
+every item unless its note (whiteboard or typed) says otherwise, or the photos clearly show otherwise \
+(e.g. a visible crack). Go through the checklist before you answer.\n\n" + "\n\n".join(parts))
 
 
 def client():
@@ -198,7 +224,7 @@ def draft(claude, model, divider, photos, tote=None, effort="medium", note=None)
     with claude.messages.stream(
         model=model,
         max_tokens=16000,
-        system=SYSTEM,
+        system=SYSTEM + seller_notes(),
         output_config={"effort": effort, "format": {"type": "json_schema", "schema": SCHEMA}},
         messages=[{"role": "user", "content": content}],
     ) as stream:
@@ -295,7 +321,7 @@ def resolve(claude, model, item, answers, effort="low"):
     with claude.messages.stream(
         model=model,
         max_tokens=8000,
-        system=RESOLVE_SYSTEM,
+        system=RESOLVE_SYSTEM + seller_notes(),
         output_config={"effort": effort, "format": {"type": "json_schema", "schema": RESOLVE_SCHEMA}},
         messages=[{"role": "user", "content": text}],
     ) as stream:
