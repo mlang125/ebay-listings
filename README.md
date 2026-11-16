@@ -70,6 +70,9 @@ Pages (every table sorts by clicking a column header; the sort stays in the URL)
 - **Totes:** each tote's on-hand count, listed value and last check, plus the next free tote ID.
   The tote page has the same tick-and-act bar as the items list.
   - *Recent changes:* each tote page lists what moved in and out, combines, splits and checks, and who did them.
+  - *Scrap…* (admins, on a tote's page) is for test totes and mistakes: it deletes the tote's items that were never
+    listed, with their drafts and photos, after you type the tote's code. Published items stay; the tote code stays
+    for reuse; the scrapped SKUs aren't handed out again, and the tote's history says who scrapped what.
   - *Labels:* `/labels` prints one 4x6 label per tote: the code in big letters and a QR code that opens
     the tote's page. Set `LABEL_URL` in `.env` (e.g. `http://your-mac.local:5050`) so printed codes keep
     working if the Mac's IP address changes.

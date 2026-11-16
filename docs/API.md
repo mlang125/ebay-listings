@@ -57,6 +57,8 @@ app should show its sign-in screen. Failed sign-ins count toward the same lockou
 | POST | /items/bulk | `{"skus": [...], "action": "move"/"missing"/"found"/"status"/"drop", ...}` with `tote`, `status`, `note` or `percent` (drop = suggest a lower price). All or nothing -> `{"done", "skus"}` |
 | POST | /totes/{code}/count | `{"here": [SKUs found], "extra": [SKUs found here but recorded elsewhere]}`. On-hand items not in `here` become missing, extras move in, the tote is marked checked -> `{"here", "missing", "new_missing", "found", "moved_in", "message"}` |
 | POST | /totes/{code}/checked | Record that someone went through the tote -> 204 |
+| GET | /totes/{code}/scrap | Admins: what scrapping the tote would do -> `{"items": [never-listed items that would be deleted], "batches": [photo batches that would go], "kept": [items that stay, each with "why"]}`. Changes nothing |
+| POST | /totes/{code}/scrap | Admins: `{"confirm": "A5"}` (the tote's code) deletes those items with their drafts and photos, and the emptied batches. Published items stay. Can't be undone -> the same shape as the GET |
 | POST | /totes/consolidate | `{"codes": ["B4", "C6"], "into": "B4"}` (no `into` = next free tote). Refuses a tote that has items unless it's listed -> `{"into", "moved"}` |
 | POST | /totes/{code}/split | `{"plan": {"MV-00012": "C3"}}` Send items from this tote to others |
 

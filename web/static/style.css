@@ -49,6 +49,7 @@ textarea { resize: vertical; }
 fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 button { font: inherit; padding: 7px 14px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--text); cursor: pointer; }
 button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+button.danger { background: var(--err-bg); color: var(--err); border-color: var(--err); }
 button.small { padding: 2px 8px; font-size: 0.85em; }
 button.link { border: 0; background: none; color: var(--accent); padding: 0; }
 button:disabled { opacity: 0.5; cursor: default; }

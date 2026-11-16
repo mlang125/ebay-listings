@@ -11,6 +11,7 @@
     <button>I checked this tote</button>
     <a href="{{ url_for('labels', codes=code) }}">Print label</a>
     <button type="button" onclick="window.print()">Print contents</button>
+    {% if g.user.role == 'admin' %}<a href="{{ url_for('tote_scrap', code=code) }}" class="muted">Scrap…</a>{% endif %}
   </form>
 </div>
 {% if place and place.notes %}<p class="muted">{{ place.notes }}</p>{% endif %}

@@ -21,7 +21,7 @@ from ebay import api as ebay_api, capture, config, db, drafts, jobs, listings, o
 from . import (CONDITIONS, ITEMS_SQL, ITEM_SORTS, LOCKOUT_MINUTES, MAX_FAILED_SIGN_INS, TITLE_MAX, TOTE_SORTS,
                USERS_SQL, _float, _item_filters, _parse_json, _password_mark, _sku, activity_rows, attention,
                change_user, count_tote, data_checks, draft_state, edit_changes, item_action, order_by, problems,
-               ship, sign_in_failures, sync_ebay, answer_questions)
+               scrap_plan, scrap_tote, ship, sign_in_failures, sync_ebay, answer_questions)
 
 blueprint = Blueprint("api", __name__, url_prefix="/api/v1")
 
@@ -343,6 +343,40 @@ def tote_count(code):
     except ValueError as e:
         return error(400, str(e).rstrip(".") + ". Nothing was changed.")
     return jsonify(result)
+
+
+def _scrap_json(plan):
+    return {"items": [dict(r) for r in plan["items"]], "batches": [b["name"] for b in plan["batches"]],
+            "kept": [{**dict(r), "why": why} for r, why in plan["kept"]]}
+
+
+@blueprint.route("/totes/<code>/scrap")
+@token_required
+def tote_scrap_plan(code):
+    """What scrapping the tote would delete and what would stay. Changes nothing. Admins only."""
+    if g.user["role"] != "admin":
+        return error(403, "Only admins can scrap totes.")
+    code, err = _code(code)
+    return err or jsonify(_scrap_json(scrap_plan(g.conn, code)))
+
+
+@blueprint.route("/totes/<code>/scrap", methods=["POST"])
+@token_required
+def tote_scrap(code):
+    """{"confirm": "<the tote's code>"}: delete the tote's never-listed items with their drafts and
+    photos, and its photo batches once empty. Published items stay. Admins only; can't be undone."""
+    if g.user["role"] != "admin":
+        return error(403, "Only admins can scrap totes.")
+    code, err = _code(code)
+    if err:
+        return err
+    if str(_body().get("confirm") or "").strip().upper() != code:
+        return error(400, "Send confirm: %s. Nothing was scrapped." % code)
+    try:
+        plan = scrap_tote(g.conn, code, "api", g.user["id"], current_app.config["BATCHES_DIR"], current_app.config["INBOX_DIR"])
+    except ValueError as e:
+        return error(400, str(e))
+    return jsonify(_scrap_json(plan))
 
 
 @blueprint.route("/totes/<code>/checked", methods=["POST"])

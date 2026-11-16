@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Scrap {{ code }}{% endblock %}
+{% block body %}
+<div class="head">
+  <h1>Scrap {{ code }}</h1>
+  <span class="pager"><a href="{{ url_for('tote', code=code) }}">Back to {{ code }}</a></span>
+</div>
+<p>For test totes and mistakes. Items that were never listed are deleted with their drafts and photos,
+   and so are the tote's photo batches once they're empty. {{ code }} itself stays, empty and ready to use again.
+   This can't be undone.</p>
+
+{% if plan["items"] %}
+<div class="card warnbox">
+  <strong>{{ plan["items"]|length }} item{{ '' if plan["items"]|length == 1 else 's' }} will be deleted</strong>
+  <table>
+    {% for r in plan["items"] %}
+    <tr><td><a href="{{ url_for('item', sku=r.sku) }}">{{ r.sku }}</a></td><td>{{ r.status }}</td><td>{{ r.title or '(no title yet)' }}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+{% if plan.batches %}
+<p>Photo batches deleted: {% for b in plan.batches %}<a href="{{ url_for('batch', batch=b.name) }}">{{ b.name }}</a>{{ ', ' if not loop.last }}{% endfor %}</p>
+{% endif %}
+{% if plan.kept %}
+<div class="card">
+  <strong>These stay in {{ code }}</strong>
+  <table>
+    {% for r, why in plan.kept %}
+    <tr><td><a href="{{ url_for('item', sku=r.sku) }}">{{ r.sku }}</a></td><td>{{ r.status }}</td><td>{{ r.title or '' }}</td><td class="muted">{{ why }}</td></tr>
+    {% endfor %}
+  </table>
+  <p class="muted small">Move them to another tote first if you want {{ code }} empty.</p>
+</div>
+{% endif %}
+
+{% if plan["items"] or plan.batches %}
+<form method="post" class="card">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label>Type <strong>{{ code }}</strong> to confirm
+    <input name="confirm" autocomplete="off" autocapitalize="characters" required></label>
+  <button class="danger">Scrap {{ code }}</button>
+</form>
+{% else %}
+<p class="muted">Nothing in {{ code }} can be scrapped.</p>
+{% endif %}
+{% endblock %}

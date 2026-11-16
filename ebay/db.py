@@ -535,10 +535,11 @@ def own_listing_ids(conn):
 
 
 def next_sku(conn, prefix="MV-"):
-    """The next free MV-##### number."""
+    """The next free MV-##### number. SKUs of scrapped items (whose history is still in events) aren't reused."""
     numbers = [
         int(m.group(1))
-        for (sku,) in conn.execute("SELECT sku FROM items WHERE sku LIKE ?", (prefix + "%",))
+        for (sku,) in conn.execute("SELECT sku FROM items WHERE sku LIKE ? UNION SELECT entity_id FROM events"
+                                   " WHERE entity = 'item' AND entity_id LIKE ?", (prefix + "%", prefix + "%"))
         for m in [re.match(re.escape(prefix) + r"(\d+)$", sku)]
         if m
     ]

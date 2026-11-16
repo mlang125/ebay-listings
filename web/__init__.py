@@ -13,6 +13,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 
 import segno
 from flask import Flask, abort, flash, g, redirect, render_template, request, send_from_directory, session, url_for
@@ -21,7 +22,7 @@ from werkzeug.utils import secure_filename
 from werkzeug.exceptions import HTTPException
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from ebay import api as ebay_api, comps, config, db, drafter, drafts, listings, orders, sales, trading
+from ebay import api as ebay_api, comps, config, db, drafter, drafts, jobs, listings, orders, sales, trading
 
 BATCH_RE = re.compile(r"^[\w.-]+$")
 
@@ -542,6 +543,76 @@ def answer_questions(conn, item, answers, actor, user, version=None):
     with conn:
         drafts.save(conn, item, actor, user, changed=changed, version=version)
     return changed, out["summary"]
+
+
+SCRAPPABLE = ("PENDING", "SKIPPED")  # never listed
+
+
+def scrap_plan(conn, code):
+    """What scrapping a tote would do: `items` (never listed, so they go), `kept` [(row, why)] (they
+    stay: published, sold, or another item points at them) and `batches` (its photo batches that end
+    up empty, so they go too). Changes nothing."""
+    rows = conn.execute(
+        "SELECT i.sku, i.title, i.status, i.batch_id FROM items i JOIN locations l ON l.id = i.location_id"
+        " WHERE l.code = ? ORDER BY i.sku", (code,)).fetchall()
+    items, kept = [], []
+    for r in rows:
+        if conn.execute("SELECT 1 FROM listings WHERE sku = ?", (r["sku"],)).fetchone():
+            kept.append((r, "it was published on eBay"))
+        elif r["status"] not in SCRAPPABLE:
+            kept.append((r, "it's %s" % r["status"].replace("_", " ").lower()))
+        elif conn.execute("SELECT 1 FROM order_lines WHERE sku = ?", (r["sku"],)).fetchone():
+            kept.append((r, "it has sales"))
+        elif conn.execute("SELECT 1 FROM items WHERE relisted_as = ?", (r["sku"],)).fetchone():
+            kept.append((r, "it's the relist of another item"))
+        else:
+            items.append(r)
+    going = {r["sku"] for r in items}
+    batches = []
+    for b in conn.execute("SELECT b.* FROM batches b JOIN locations l ON l.id = b.location_id WHERE l.code = ?"
+                          " ORDER BY b.id", (code,)):
+        left = {r[0] for r in conn.execute("SELECT sku FROM items WHERE batch_id = ? UNION SELECT sku FROM drafts"
+                                           " WHERE batch_id = ?", (b["id"], b["id"]))}
+        if left <= going:
+            batches.append(b)
+    return {"items": items, "kept": kept, "batches": batches}
+
+
+def scrap_tote(conn, code, actor, user, batches_dir, inbox_dir):
+    """Empty a tote of test or mistaken items: every item in it that was never listed is deleted with
+    its draft and photos, and its photo batches that end up empty go too. Published items stay. The
+    tote's code stays (empty, ready to reuse), item histories stay, and one event on the tote records
+    who scrapped what; SKUs aren't reused (db.next_sku). Returns the plan that was carried out."""
+    if jobs._live(conn):
+        raise ValueError("Claude is drafting right now; scrap the tote when that's finished.")
+    plan = scrap_plan(conn, code)
+    if not plan["items"] and not plan["batches"]:
+        raise ValueError("Nothing in %s can be scrapped." % code)
+    files = []
+    with conn:
+        for r in plan["items"]:
+            row = conn.execute("SELECT d.data, b.name FROM drafts d JOIN batches b ON b.id = d.batch_id WHERE d.sku = ?",
+                               (r["sku"],)).fetchone()
+            if row:
+                files += [os.path.join(batches_dir, row["name"], "photos", p) for p in json.loads(row["data"]).get("photos", [])]
+            conn.execute("DELETE FROM drafts WHERE sku = ?", (r["sku"],))
+            conn.execute("DELETE FROM items WHERE sku = ?", (r["sku"],))
+        for b in plan["batches"]:
+            conn.execute("DELETE FROM drafts WHERE batch_id = ?", (b["id"],))
+            conn.execute("DELETE FROM batches WHERE id = ?", (b["id"],))
+        db.log_event(conn, "location", code, "scrapped", actor, user, data={
+            "skus": [r["sku"] for r in plan["items"]], "batches": [b["name"] for b in plan["batches"]],
+            "kept": [r["sku"] for r, _ in plan["kept"]]})
+    # Files go only once the records are gone, so a failure above leaves everything as it was.
+    for path in files:
+        if os.path.isfile(path):
+            os.remove(path)
+    for b in plan["batches"]:
+        for base in (batches_dir, inbox_dir):
+            folder = os.path.join(base, b["name"])
+            if b["name"] and os.path.dirname(os.path.abspath(folder)) == os.path.abspath(base) and os.path.isdir(folder):
+                shutil.rmtree(folder)
+    return plan
 
 
 def sync_ebay(conn, user):
@@ -1325,6 +1396,32 @@ def _routes(app):
         rows = g.conn.execute(ITEMS_SQL + " WHERE l.code = ? AND i.status NOT IN (?, ?) ORDER BY i.sku",
                               (code, *db.GONE)).fetchall()
         return render_template("count.html", code=code, rows=rows)
+
+    @app.route("/totes/<code>/scrap", methods=["GET", "POST"])
+    @login_required
+    def tote_scrap(code):
+        """Admins delete a tote's test or mistaken items (never listed ones only), after typing its code."""
+        require_role("admin")
+        try:
+            code = db.check_code(code)
+        except ValueError:
+            abort(404)
+        if request.method == "POST":
+            if request.form.get("confirm", "").strip().upper() != code:
+                flash("Type %s to confirm. Nothing was scrapped." % code, "error")
+                return redirect(url_for("tote_scrap", code=code))
+            try:
+                plan = scrap_tote(g.conn, code, "web", g.user["id"], app.config["BATCHES_DIR"], app.config["INBOX_DIR"])
+            except ValueError as e:
+                flash(str(e), "error")
+                return redirect(url_for("tote_scrap", code=code))
+            flash("Scrapped %d item%s and %d photo batch%s from %s." % (
+                len(plan["items"]), "" if len(plan["items"]) == 1 else "s",
+                len(plan["batches"]), "" if len(plan["batches"]) == 1 else "es", code), "ok")
+            for r, why in plan["kept"]:
+                flash("%s stayed: %s." % (r["sku"], why), "ok")
+            return redirect(url_for("tote", code=code))
+        return render_template("scrap.html", code=code, plan=scrap_plan(g.conn, code))
 
     @app.route("/totes/<code>/checked", methods=["POST"])
     @login_required

@@ -983,6 +983,45 @@ check(c.get("/activity?who=sam"), has=["merged"])
 check(c.get("/activity?q=" + SHIP), has=["missing", "found"])
 nouser = fresh().execute("select count(*) from events where user_id is null and actor = 'web' and action <> 'sign_in_failed' and id > ?", (START,)).fetchone()[0]
 assert nouser == 0, nouser
+# --- scrapping a test tote: never-listed items go with their drafts and photos; published ones stay ---
+H = {"Authorization": "Bearer " + api_c.post("/api/v1/auth/token", json={"name": "matt", "password": "testpass123"}).get_json()["token"]}
+zb = api_c.post("/api/v1/batches", headers=H, json={"tote": "Z9"}).get_json()["batch"]
+z1 = api_c.post("/api/v1/batches/%d/items" % zb["id"], headers=H).get_json()["sku"]
+z2 = api_c.post("/api/v1/batches/%d/items" % zb["id"], headers=H).get_json()["sku"]
+api_c.put(PH % (zb["id"], z1, "eeeeeeee-1"), headers={**H, "Content-Type": "image/jpeg"}, data=JPG)
+z_photo = os.path.join(S, "batches", zb["name"], "photos", drafts.get(fresh(), z1)[1]["photos"][0])
+assert os.path.isfile(z_photo)
+z_listed = fresh().execute("select sku from items where status = 'LISTED' limit 1").fetchone()[0]
+with fresh() as conn:
+    db.move(conn, z_listed, "Z9", "test")
+    db.batch_id(conn, "z9-upload", "Z9", "upload")  # an uploaded batch waiting in the inbox
+os.makedirs(os.path.join(S, "inbox", "z9-upload")); open(os.path.join(S, "inbox", "z9-upload", "001-a.jpg"), "wb").write(JPG)
+assert sam.get("/totes/Z9/scrap").status_code == 403, "admins only"
+check(c.get("/totes/Z9"), has=["Scrap…"])
+check(c.get("/totes/Z9/scrap"), has=["2 items will be deleted", z1, z2, "These stay in Z9", z_listed, "it was published on eBay", "z9-upload"])
+plan = api_c.get("/api/v1/totes/Z9/scrap", headers=H).get_json()
+assert {r["sku"] for r in plan["items"]} == {z1, z2} and set(plan["batches"]) == {zb["name"], "z9-upload"}, plan
+assert [k["sku"] for k in plan["kept"]] == [z_listed], plan
+check(c.post("/totes/Z9/scrap", data={"csrf": tok, "confirm": "Z8"}, follow_redirects=True), has=["Type Z9 to confirm"])
+assert fresh().execute("select count(*) from items where sku in (?, ?)", (z1, z2)).fetchone()[0] == 2, "a wrong code scraps nothing"
+check(c.post("/totes/Z9/scrap", data={"csrf": tok, "confirm": "z9"}, follow_redirects=True),
+      has=["Scrapped 2 items and 2 photo batches from Z9.", z_listed + " stayed: it was published on eBay."])
+cdb = fresh()
+assert cdb.execute("select count(*) from items where sku in (?, ?)", (z1, z2)).fetchone()[0] == 0
+assert cdb.execute("select count(*) from drafts where sku in (?, ?)", (z1, z2)).fetchone()[0] == 0
+assert cdb.execute("select count(*) from batches where name in (?, 'z9-upload')", (zb["name"],)).fetchone()[0] == 0
+assert cdb.execute("select l.code from items i join locations l on l.id = i.location_id where sku = ?", (z_listed,)).fetchone()[0] == "Z9"
+ev = cdb.execute("select user_id, data from events where entity = 'location' and entity_id = 'Z9' and action = 'scrapped'").fetchone()
+assert ev[0] == 1 and set(json.loads(ev[1])["skus"]) == {z1, z2} and json.loads(ev[1])["kept"] == [z_listed], ev
+assert int(db.next_sku(cdb)[3:]) > int(max(z1, z2)[3:]), "scrapped SKUs aren't handed out again"
+cdb.close()
+assert not os.path.exists(z_photo) and not os.path.exists(os.path.join(S, "batches", zb["name"]))
+assert not os.path.exists(os.path.join(S, "inbox", "z9-upload"))
+check(c.get("/totes/Z9/scrap"), has=["Nothing in Z9 can be scrapped"])
+r = api_c.post("/api/v1/totes/Z9/scrap", headers=H, json={"confirm": "Z9"})
+assert r.status_code == 400 and "Nothing in Z9" in r.get_json()["error"]["message"]
+assert api_c.post("/api/v1/totes/Z9/scrap", headers=H, json={}).status_code == 400
+
 c.post("/logout", data={"csrf": tok}); assert c.get("/").status_code == 302
 print("all checks passed")
 shutil.rmtree(S)
