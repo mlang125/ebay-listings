@@ -91,6 +91,39 @@ v = drafts.get(fresh(), "MV-00005")[1]["_version"]
 check(sam.post("/drafts/batch1/MV-00005", data={**form, "csrf": stok, "version": str(v), "needs_check": "Sam's question"}, follow_redirects=True), has=["Saved."])
 check(c.post("/drafts/batch1/MV-00005", data={**form, "version": str(v), "then": "publish"}), has=["sam saved this draft", "Save again"])
 assert drafts.get(fresh(), "MV-00005")[1]["needs_check"] == ["Sam's question"] and not calls
+# answering the open questions: Claude (faked) rewrites the draft to match
+resolved = []
+def fake_resolve(claude, model, item, answers, effort="low"):
+    resolved.append((model, answers))
+    return {"title": "Acme Classic Teapot Sealed New in Box Ceramic White 6 Cup Kitchen Tea Pot Brewing Set",
+            "condition": "NEW", "condition_description": "Factory sealed.", "description": item.get("description", ""),
+            "aspects": {**item.get("aspects", {}), "Sealed": ["Yes"]}, "still_open": ["Which year?"], "summary": "Set to new, sealed."}, {
+            "model": model, "cost_usd": 0.03}
+drafter.resolve, drafter.client = fake_resolve, lambda: "fake claude"
+page = check(c.get("/drafts/batch1/MV-00005"), has=["Apply answers", 'name="a_0"', "Sam&#39;s question"])
+v = drafts.get(fresh(), "MV-00005")[1]["_version"]
+ans = {"csrf": tok, "version": str(v), "count": "1", "q_0": "Sam's question"}
+check(c.post("/drafts/batch1/MV-00005/answers", data={**ans, "a_0": "  "}, follow_redirects=True), has=["Type an answer"])
+check(c.post("/drafts/batch1/MV-00005/answers", data={**ans, "q_0": "Old question", "a_0": "yes"}, follow_redirects=True),
+      has=["questions changed"])
+assert not resolved, "nothing goes to Claude without a real answer"
+check(c.post("/drafts/batch1/MV-00005/answers", data={**ans, "a_0": "yes,  it is sealed"}, follow_redirects=True),
+      has=["Answers applied. Set to new, sealed.", "Title was cut to 80", "Answered questions (1)", "Which year?"])
+d = drafts.get(fresh(), "MV-00005")[1]
+assert resolved == [("claude-opus-5-5", [("Sam's question", "yes, it is sealed")])], resolved
+assert d["condition"] == "NEW" and d["aspects"]["Sealed"] == ["Yes"] and d["needs_check"] == ["Which year?"], d
+assert len(d["title"]) <= 80 and not d["title"].endswith(" ") and d["title_trimmed_from"].endswith("Brewing Set"), d["title"]
+assert d["answers"][0]["answer"] == "yes, it is sealed" and d["answers"][0]["user"] == 1 and d["resolved_by"][0]["cost_usd"] == 0.03
+assert fresh().execute("select user_id from events where entity_id='MV-00005' and action='edited' order by id desc").fetchone()[0] == 1
+check(c.post("/drafts/batch1/MV-00005/answers", data={**ans, "q_0": "Which year?", "a_0": "1999"}, follow_redirects=True),
+      has=["Someone saved this draft while you were answering"])
+assert len(resolved) == 2, "the stale version is only noticed when saving"
+with fresh() as conn:  # put the draft back for the checks below
+    _, d = drafts.get(conn, "MV-00005")
+    for k in ("answers", "resolved_by", "title_trimmed_from"):
+        d.pop(k, None)
+    d.update(title=item["title"], condition=item["condition"], needs_check=["Sam's question"], aspects=item["aspects"])
+    drafts.save(conn, d, "test")
 v = drafts.get(fresh(), "MV-00005")[1]["_version"]
 r = c.post("/drafts/batch1/MV-00005", data={**form, "version": str(v), "then": "publish"}, follow_redirects=True)
 check(r, has=["Saved.", "published as listing 999"])
@@ -103,7 +136,7 @@ check(c.post("/drafts/batch1/publish", data={"csrf": tok}, follow_redirects=True
 check(c.post("/drafts/batch1/MV-00005/comps", data={"csrf": tok}, follow_redirects=True), has=["Price estimate updated"])
 assert calls[-1] == ("comps", {"MV-00005"}, 1)
 edits = fresh().execute("select u.name, e.data from events e join users u on u.id=e.user_id where e.entity_id='MV-00005' and e.action='edited' and e.id > ? order by e.id", (START,)).fetchall()
-assert [e[0] for e in edits] == ["matt", "sam", "matt"], [tuple(e) for e in edits]
+assert [e[0] for e in edits] == ["matt", "sam", "matt", "matt"], [tuple(e) for e in edits]  # the last two: answers, then the save
 
 # --- items, missing, relists ---
 to_ship = orders.pick_list(fresh())
@@ -843,6 +876,15 @@ assert r2.status_code == 409 and r2.get_json()["current"]["draft"]["title"] == "
 cdb = db.connect(S + "/ebay.db"); assert cdb.execute("SELECT title, price FROM items WHERE sku = ?", (sku1,)).fetchone()[0] == "Fixed title"
 assert cdb.execute("SELECT actor, user_id FROM events WHERE entity_id = ? AND action = 'edited' ORDER BY id DESC", (sku1,)).fetchone()[0] == "api"
 cdb.close()
+v = api_c.patch(DP, headers=H, json={"version": r["version"], "needs_check": ["Does it work?"]}).get_json()["version"]
+assert api_c.post(DP + "/answers", headers=H, json={"version": v, "answers": "yes"}).status_code == 400
+assert api_c.post(DP + "/answers", headers=H, json={"answers": []}).status_code == 400
+r = api_c.post(DP + "/answers", headers=H, json={"version": v, "answers": [{"question": "Does it work?", "answer": "Yes, tested"}]})
+assert r.status_code == 200, r.data
+r = r.get_json()
+assert r["summary"] == "Set to new, sealed." and r["draft"]["needs_check"] == ["Which year?"] and "answers" in r["changed"], r
+assert api_c.post(DP + "/answers", headers=H, json={"version": v, "answers": [{"question": "Which year?", "answer": "1999"}]}).status_code == 409
+v = api_c.patch(DP, headers=H, json={"version": r["version"], "needs_check": [], "title": "Fixed title", "condition": "USED_GOOD"}).get_json()["version"]
 assert api_c.post("/api/v1/drafts/publish", headers=shp, json={"skus": [sku1]}).status_code == 403
 calls.clear()
 r = api_c.post("/api/v1/drafts/publish", headers=H, json={"skus": [sku1, sku2]}).get_json()

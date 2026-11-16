@@ -30,9 +30,33 @@
 {% elif problems and not published %}
 <div class="card warnbox">
   <strong>Before publishing:</strong>
-  <ul>{% for p in problems %}<li>{{ p }}</li>{% endfor %}</ul>
-  <p class="muted">Answer each open question, then delete it from the list at the bottom of the form.</p>
+  {% if other_problems %}<ul>{% for p in other_problems %}<li>{{ p }}</li>{% endfor %}</ul>{% endif %}
+  {% if item.needs_check %}
+  <form method="post" action="{{ url_for('draft_answers', batch=batch, sku=item.sku) }}" class="answers">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="version" value="{{ item._version }}">
+    <input type="hidden" name="count" value="{{ item.needs_check|length }}">
+    {% for q in item.needs_check %}
+    <label>{{ q }}
+      <input type="hidden" name="q_{{ loop.index0 }}" value="{{ q }}">
+      <input name="a_{{ loop.index0 }}" placeholder="Answer (leave empty to skip)" autocomplete="off" {% if not can_resolve %}disabled{% endif %}></label>
+    {% endfor %}
+    {% if can_resolve %}
+    <p class="actions"><button class="primary">Apply answers</button>
+      <span class="muted small">Claude rewrites the draft to match (about {{ money(resolve_cost) }}). Save your other edits first.</span></p>
+    {% else %}
+    <p class="muted">A lister or admin applies answers. You can also settle a question yourself and delete it from the list at the bottom.</p>
+    {% endif %}
+  </form>
+  {% endif %}
 </div>
+{% endif %}
+{% if item.title_trimmed_from and not published %}<p class="muted small">Title was cut to {{ title_max }} characters from: {{ item.title_trimmed_from }}</p>{% endif %}
+{% if item.answers %}
+<details class="card"><summary>Answered questions ({{ item.answers|length }})</summary>
+  <ul>{% for a in item.answers %}<li>{{ a.question }} <strong>{{ a.answer }}</strong> <span class="muted small">{{ a.at[:16]|replace('T', ' ') }}</span></li>{% endfor %}</ul>
+  {% if item.resolved_by %}<p class="muted small">Last change by Claude: {{ item.resolved_by[-1].summary }}</p>{% endif %}
+</details>
 {% endif %}
 
 <form method="post" class="editor">

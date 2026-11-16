@@ -52,7 +52,9 @@ Pages (every table sorts by clicking a column header; the sort stays in the URL)
 - **Drafts:** each batch's drafts with their photos and state (*needs work*, *ready*, *published*,
   *skipped*). The editor covers title, price, condition, description, item specifics, package size,
   comp search words and open questions. A draft can't be published while it still has open questions
-  (`needs_check`), so delete each question once it's settled. *Update estimate* re-runs `comps` for that draft.
+  (`needs_check`). Type an answer under each one and press *Apply answers*: one small Claude request
+  (text only, about $0.05) rewrites the title, condition, description and item specifics to match and closes
+  the answered questions; the answers stay on the draft. Or delete a question by hand once it's settled. *Update estimate* re-runs `comps` for that draft.
   *Publish N ready* publishes every ready draft in the batch. Edits and publishes are logged under the signed-in person.
 - **Items:** search by SKU or title and filter by status (plus *on hand*, *missing* and *price suggested*),
   tote, price range and days listed, together. 200 per page; *Download CSV* exports everything matching.

@@ -21,7 +21,7 @@ from ebay import api as ebay_api, capture, config, db, drafts, jobs, listings, o
 from . import (CONDITIONS, ITEMS_SQL, ITEM_SORTS, LOCKOUT_MINUTES, MAX_FAILED_SIGN_INS, TITLE_MAX, TOTE_SORTS,
                USERS_SQL, _float, _item_filters, _parse_json, _password_mark, _sku, activity_rows, attention,
                change_user, count_tote, data_checks, draft_state, edit_changes, item_action, order_by, problems,
-               ship, sign_in_failures, sync_ebay)
+               ship, sign_in_failures, sync_ebay, answer_questions)
 
 blueprint = Blueprint("api", __name__, url_prefix="/api/v1")
 
@@ -796,6 +796,8 @@ def apply_draft(item, body):
         elif item.get(key) != value:
             item[key] = value
             changed.append(key)
+    if "title" in changed:
+        item.pop("title_trimmed_from", None)  # a person has looked at the title since it was cut
     return changed
 
 
@@ -842,6 +844,37 @@ def draft_edit(sku):
             return reply, 409
     batch, item = drafts.get(g.conn, item["sku"])
     return jsonify({**_draft_json(batch, item), "changed": changed})
+
+
+@blueprint.route("/drafts/<sku>/answers", methods=["POST"])
+@token_required
+def draft_answers(sku):
+    """{"version", "answers": [{"question", "answer"}]}: answers to the draft's open questions go to
+    Claude (a few cents; listers and admins only), which rewrites the draft to match. Questions must be
+    from needs_check as loaded; answered ones close. 409 with the current draft if someone saved since."""
+    if g.user["role"] not in ("admin", "lister"):
+        return error(403, "Only admins and listers can apply answers.")
+    batch, item, err = _load_draft(sku)
+    if err:
+        return err
+    body = _body()
+    version = body.get("version")
+    if not isinstance(version, int) or isinstance(version, bool):
+        return error(400, "Send the draft's version.")
+    raw = body.get("answers")
+    if not isinstance(raw, list) or not all(isinstance(a, dict) for a in raw):
+        return error(400, "answers is a list of {question, answer}.")
+    try:
+        changed, summary = answer_questions(g.conn, item, [(str(a.get("question") or ""), str(a.get("answer") or ""))
+                                                           for a in raw], "api", g.user["id"], version=version)
+    except ValueError as e:
+        return error(400, str(e))
+    except drafts.Conflict:
+        batch, theirs = drafts.get(g.conn, item["sku"])
+        return jsonify({"error": {"code": "conflict", "message": "Someone saved this draft while you were answering, "
+                                  "so nothing changed."}, "current": _draft_json(batch, theirs)}), 409
+    batch, item = drafts.get(g.conn, item["sku"])
+    return jsonify({**_draft_json(batch, item), "changed": changed, "summary": summary})
 
 
 @blueprint.route("/drafts/publish", methods=["POST"])

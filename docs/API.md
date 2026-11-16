@@ -93,6 +93,7 @@ belong to their item from the moment they're taken, so nothing has to be split o
 | GET | /jobs | The last 20 jobs |
 | GET | /drafts/{sku} | A draft: `{"sku", "batch", "version", "state", "problems", "draft": {...}, "photos"}`. `state` is `ready`, `needs work`, `skipped` or `published`; `problems` say what stops it being ready |
 | PATCH | /drafts/{sku} | Any of `title`, `price`, `condition`, `condition_description`, `category_id`, `description`, `aspects` (`{name: [values]}`), `needs_check` (list), `comp_query`, `package` (`{weight_oz, length_in, width_in, height_in}`), `skip` (a reason, or null), plus the `version` you loaded. If someone saved since: 409 with `current`, nothing overwritten |
+| POST | /drafts/{sku}/answers | `{"version": 3, "answers": [{"question": "Is it sealed?", "answer": "yes"}]}` Claude rewrites title, condition, condition notes, description and item specifics to match (one text-only request, a few cents; listers and admins). Answered questions close; the reply is the draft plus `changed` and `summary`. 409 + `current` if someone saved since |
 | POST | /drafts/publish | `{"skus": [...]}` List ready drafts on eBay; listers and admins only -> `{"messages", "not_ready": {sku: [problems]}}`. While eBay read-only mode is on, 502 `read_only` |
 
 A batch looks like:

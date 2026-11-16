@@ -37,8 +37,20 @@ CONDITIONS = [
     "USED_EXCELLENT", "USED_VERY_GOOD", "USED_GOOD", "USED_ACCEPTABLE", "FOR_PARTS_OR_NOT_WORKING",
 ]
 
+TITLE_MAX = 80  # eBay's limit
+
 # Claude looks at images at up to about this many pixels on the long edge; bigger only costs upload time.
 MAX_EDGE = 1568
+
+# Shared by drafting and by applying answers. eBay search matches title words, so the title is the SEO.
+TITLE_RULES = """title: at most 80 characters (count them: eBay rejects 81), and use most of them, \
+because eBay's search matches title words. Put first the words buyers type: brand, then model, \
+name or number, then the item type, then the details they search and filter by (size, color, \
+material, edition, year, platform, quantity such as "Set of 4" or "Lot of 3", and condition words \
+such as "New Sealed", "Complete", "CIB", "Open Box", "Untested", "For Parts"). Prefer the plain \
+words people search for over clever ones; add a common synonym only if room is left (e.g. \
+"Hoodie Sweatshirt"). No filler or hype ("L@@K", "Wow", "Great", "Rare" unless it truly is), no \
+repeated words, no punctuation names don't need, no emoji or ALL CAPS."""
 
 SYSTEM = """You write eBay listings for a small resale business that sells secondhand and \
 open-box goods. You get photos of one item and return its draft listing. A person reviews \
@@ -57,12 +69,11 @@ whiteboard: copy it into whiteboard_notes and let it override the photos. Tags a
 repeat each other.
 
 Fields:
-- title: at most 80 characters, and use the space. Lead with brand and model/name, then the \
-item type and the details buyers search for (size, color, edition, year, quantity, "Set of 2", \
-"CIB", "Open Box", "Untested", "For Parts"). No filler words, emoji or ALL CAPS.
+- {TITLE_RULES}
 - condition: one of the enum values. NEW only for sealed, unused items; NEW_OTHER for open box \
 or unused without original packaging; USED_EXCELLENT is eBay's general "Pre-owned"; \
-FOR_PARTS_OR_NOT_WORKING when it's broken or the whiteboard says so.
+FOR_PARTS_OR_NOT_WORKING when it's broken or the whiteboard says so. Look for shrink wrap, \
+factory tape or seals: intact ones mean NEW; if you can't tell whether it's sealed, ask.
 - condition_description: one or two plain sentences on the actual condition: wear, flaws, \
 what's missing, whether it was tested. Only what the photos or whiteboard show.
 - description: a short paragraph on what the item is (from labels, tags and packaging you can \
@@ -83,7 +94,7 @@ based on what this sells for used on eBay. A person checks it against real sales
 from the item's apparent size; close is good enough.
 - needs_check: short questions a person must answer before listing: things that affect value \
 or accuracy that the photos don't settle (does it work, is a part missing, which edition, \
-measurements you guessed). Empty if nothing is uncertain."""
+measurements you guessed). Empty if nothing is uncertain.""".replace("{TITLE_RULES}", TITLE_RULES)
 
 SCHEMA = {
     "type": "object",
@@ -158,6 +169,17 @@ def _required_aspects(category_id):
     return [a["localizedAspectName"] for a in found.get("aspects", []) if a.get("aspectConstraint", {}).get("aspectRequired")]
 
 
+def fit_title(item):
+    """Claude sometimes overshoots by a character or two: cut the title back to 80 at a word break
+    (dropping the least important words, which come last) and keep the original for a person to see."""
+    title = " ".join(item["title"].split())
+    if len(title) > TITLE_MAX:
+        item["title_trimmed_from"] = title
+        cut = title[:TITLE_MAX + 1]
+        title = (cut[:cut.rindex(" ")] if " " in cut else cut[:TITLE_MAX]).rstrip(" ,-/&+|")
+    item["title"] = title
+
+
 def draft(claude, model, divider, photos, tote=None, effort="medium", note=None):
     """Draft one item. `divider` and each photo are paths or open files; `note` is the seller's typed
     note (the phone app's replacement for the divider photo). Returns (draft, run info)."""
@@ -208,8 +230,7 @@ def draft(claude, model, divider, photos, tote=None, effort="medium", note=None)
         "needs_check": list(out["needs_check"]),
         "category_guess": out["category_guess"],
     }
-    if len(item["title"]) > 80:
-        item["needs_check"].append("Title is %d characters; eBay allows 80" % len(item["title"]))
+    fit_title(item)
     (category_id, category), others = _category(out["category_query"])
     item["category_id"], item["category"] = category_id, category
     if others:
@@ -222,3 +243,74 @@ def draft(claude, model, divider, photos, tote=None, effort="medium", note=None)
         item["needs_check"].append("No eBay category found for %r" % out["category_query"])
     item["drafted_by"] = run
     return item, run
+
+
+RESOLVE_SYSTEM = """You revise an eBay draft listing for a small resale business. When it was \
+drafted from photos, some questions were left open; a person who has the item in hand has now \
+answered some of them. Their answers are facts about the item: they override the photos and the \
+current draft. Put each answer where it belongs:
+- what's included or missing, whether it was tested or works: condition_description and the \
+condition paragraph of description; in the title too when buyers search for it ("Complete", \
+"Tested", "Missing Lid").
+- sealed, new or unused: condition (NEW only for sealed and unused; NEW_OTHER for open box or \
+unused without its packaging), and drop any wording about wear or use; "New Sealed" in the title.
+- broken or not working: FOR_PARTS_OR_NOT_WORKING, and say what's wrong.
+- brand, model, size, edition, measurements and the like: aspects (eBay's usual names), and the \
+title when buyers search for them.
+Change only what the answers affect and keep everything else as it is, word for word. Never add \
+details the answers and the draft don't give.
+- {TITLE_RULES}
+- still_open: questions the answers leave unsettled or newly raise (e.g. the answer was "not \
+sure"). Usually empty. Don't repeat questions that weren't answered; they stay open anyway.
+- summary: one short plain sentence on what you changed, for the person to check.""".replace("{TITLE_RULES}", TITLE_RULES)
+
+_ASPECTS = SCHEMA["properties"]["aspects"]
+RESOLVE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "condition": {"type": "string", "enum": CONDITIONS},
+        "condition_description": {"type": "string"},
+        "description": {"type": "string"},
+        "aspects": _ASPECTS,
+        "still_open": {"type": "array", "items": {"type": "string"}},
+        "summary": {"type": "string"},
+    },
+    "required": ["title", "condition", "condition_description", "description", "aspects", "still_open", "summary"],
+    "additionalProperties": False,
+}
+
+RESOLVED_FIELDS = ("title", "condition", "condition_description", "description", "aspects")
+
+
+def resolve(claude, model, item, answers, effort="low"):
+    """Rewrite a draft from a person's answers to its open questions: one small text-only request (no
+    photos), a few cents. `answers` is [(question, answer)]. Returns (new values for RESOLVED_FIELDS
+    plus still_open and summary, run info)."""
+    current = {k: item.get(k) for k in RESOLVED_FIELDS}
+    current["whiteboard_notes"] = item.get("whiteboard_notes") or ""
+    text = ("The draft as it is now (JSON):\n" + json.dumps(current, indent=1) + "\n\nThe person's answers:\n"
+            + "\n".join("Q: %s\nA: %s" % qa for qa in answers) + "\n\nRevise the draft.")
+    started = time.monotonic()
+    with claude.messages.stream(
+        model=model,
+        max_tokens=8000,
+        system=RESOLVE_SYSTEM,
+        output_config={"effort": effort, "format": {"type": "json_schema", "schema": RESOLVE_SCHEMA}},
+        messages=[{"role": "user", "content": text}],
+    ) as stream:
+        response = stream.get_final_message()
+    run = {
+        "model": model,
+        "effort": effort,
+        "seconds": round(time.monotonic() - started, 1),
+        "input_tokens": response.usage.input_tokens,
+        "output_tokens": response.usage.output_tokens,
+        "cost_usd": round(cost(model, response.usage), 4),
+        "stop_reason": response.stop_reason,
+    }
+    if response.stop_reason != "end_turn":
+        raise RuntimeError("Claude stopped early (%s)" % response.stop_reason)
+    out = json.loads(next(b.text for b in response.content if b.type == "text"))
+    out["aspects"] = {a["name"]: a["values"] for a in out["aspects"] if a["values"]}
+    return out, run

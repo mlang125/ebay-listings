@@ -21,7 +21,7 @@ from werkzeug.utils import secure_filename
 from werkzeug.exceptions import HTTPException
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from ebay import api as ebay_api, comps, config, db, drafts, listings, orders, sales, trading
+from ebay import api as ebay_api, comps, config, db, drafter, drafts, listings, orders, sales, trading
 
 BATCH_RE = re.compile(r"^[\w.-]+$")
 
@@ -290,6 +290,8 @@ def _apply_form(item, form):
         else:
             item.pop("skip", None)
         changed.append("skip")
+    if "title" in changed:
+        item.pop("title_trimmed_from", None)  # a person has looked at the title since it was cut
     return changed
 
 
@@ -499,6 +501,48 @@ DATA_CHECKS = [
     ("Shipped but still marked missing", "Missing only matters for items on hand.",
      "SELECT sku, title, status FROM items WHERE status IN ('SENT_TO_POST_OFFICE', 'DELIVERED') AND missing_since IS NOT NULL"),
 ]
+
+RESOLVE_COST = 0.05  # about what one "Apply answers" costs with Opus (text only, no photos)
+
+
+def answer_questions(conn, item, answers, actor, user, version=None):
+    """Apply a person's answers to a draft's open questions with one small Claude request: it rewrites
+    the title, condition, condition notes, description and item specifics to match, the answered
+    questions close, and the answers are kept on the draft (`answers`) as its record. `answers` is
+    [(question, answer)] with questions from needs_check; blank answers are left out. Raises
+    ValueError (plain English) or drafts.Conflict. Returns (changed field names, Claude's summary)."""
+    if item.get("published", {}).get(config.ENV):
+        raise ValueError("Already published; change it on eBay instead.")
+    open_now = item.get("needs_check") or []
+    answers = [(q.strip(), " ".join(a.split())) for q, a in answers if a and a.strip()]
+    if not answers:
+        raise ValueError("Type an answer to at least one question.")
+    if any(q not in open_now for q, _ in answers):
+        raise ValueError("The questions changed since you loaded the page; reload and answer again.")
+    model = (item.get("drafted_by") or {}).get("model") or drafter.MODELS["opus"]
+    try:
+        out, run = drafter.resolve(drafter.client(), model, item, answers)
+    except (RuntimeError, SystemExit) as e:
+        raise ValueError("Claude couldn't apply the answers: %s" % e)
+    before = {k: item.get(k) for k in drafter.RESOLVED_FIELDS + ("needs_check",)}
+    for key in drafter.RESOLVED_FIELDS:
+        if out[key] or key == "aspects":
+            item[key] = out[key]
+    if item.get("condition") not in dict(CONDITIONS):
+        item["condition"] = before["condition"]
+    drafter.fit_title(item)
+    answered = {q for q, _ in answers}
+    item["needs_check"] = [q for q in open_now if q not in answered] + [
+        q for q in out["still_open"] if q.strip() and q not in open_now]
+    at = db.now()
+    item["answers"] = (item.get("answers") or []) + [
+        {"question": q, "answer": a, "user": user, "at": at} for q, a in answers]
+    item["resolved_by"] = (item.get("resolved_by") or []) + [dict(run, at=at, summary=out["summary"])]
+    changed = [k for k, v in before.items() if item.get(k) != v] + ["answers"]
+    with conn:
+        drafts.save(conn, item, actor, user, changed=changed, version=version)
+    return changed, out["summary"]
+
 
 def sync_ebay(conn, user):
     """"Get new orders": the order sync, then items whose listing ended unsold on eBay become ENDED.
@@ -781,7 +825,33 @@ def _routes(app):
             prev_sku=skus[pos - 1] if pos > 0 else None,
             next_sku=skus[pos + 1] if pos + 1 < len(skus) else None,
             title_max=TITLE_MAX,
+            other_problems=[p for p in problems(item) if not p.startswith("Open question: ")],
+            can_resolve=g.user["role"] in ("admin", "lister"),
+            resolve_cost=RESOLVE_COST,
         )
+
+    @app.route("/drafts/<batch>/<sku>/answers", methods=["POST"])
+    @login_required
+    def draft_answers(batch, sku):
+        """Answers typed under the open questions go to Claude, which rewrites the draft to match."""
+        item = _draft(_load_batch(batch), sku)
+        if g.user["role"] not in ("admin", "lister"):
+            flash("Only admins and listers can apply answers (it's a Claude request).", "error")
+            return redirect(url_for("draft", batch=batch, sku=sku))
+        answers = [(request.form.get("q_%d" % i, ""), request.form.get("a_%d" % i, ""))
+                   for i in range(request.form.get("count", 0, type=int))]
+        try:
+            changed, summary = answer_questions(g.conn, item, answers, "web", g.user["id"],
+                                                version=request.form.get("version", type=int))
+            flash("Answers applied. %s" % summary, "ok")
+            if "title" in changed and item.get("title_trimmed_from"):
+                flash("The title was cut to %d characters; check it." % TITLE_MAX, "ok")
+        except ValueError as e:
+            flash(str(e), "error")
+        except drafts.Conflict:
+            flash("Someone saved this draft while you were answering, so nothing changed. Here's their version; "
+                  "answer again.", "error")
+        return redirect(url_for("draft", batch=batch, sku=sku))
 
     @app.route("/drafts/<batch>/<sku>/comps", methods=["POST"])
     @login_required

@@ -67,6 +67,8 @@ table.compact td { border: 0; padding: 2px 16px 2px 0; }
 .flashes .error { background: var(--err-bg); color: var(--err); }
 .warnbox { background: var(--warn-bg); color: var(--warn); border-color: transparent; }
 .warnbox ul { margin: 6px 0; }
+.answers label { color: var(--text); }
+.answers label input { margin-top: 4px; }
 
 .tag { display: inline-block; font-size: 0.75em; font-weight: 600; padding: 1px 8px; border-radius: 10px; background: var(--line); color: var(--text); vertical-align: middle; }
 .tag.ready { background: var(--ok-bg); color: var(--ok); }
