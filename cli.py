@@ -149,6 +149,8 @@ def cmd_sync(days="90"):
     print("%(orders)d orders checked, %(new_lines)d new sales, %(new_items)d new items." % counts)
     for sku, before, after, title in counts["changes"]:
         print("  %s  %s -> %s  %s" % (sku, before, after, title))
+    for sku, title in orders.sync_ended(conn, _user(conn)):
+        print("  %s  LISTED -> ENDED (ended on eBay)  %s" % (sku, title))
 
 
 def cmd_picklist(days=None):

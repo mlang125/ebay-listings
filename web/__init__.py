@@ -500,6 +500,18 @@ DATA_CHECKS = [
      "SELECT sku, title, status FROM items WHERE status IN ('SENT_TO_POST_OFFICE', 'DELIVERED') AND missing_since IS NOT NULL"),
 ]
 
+def sync_ebay(conn, user):
+    """"Get new orders": the order sync, then items whose listing ended unsold on eBay become ENDED.
+    Reads eBay only. If the ended check fails the orders still count; its error comes back as ended_error."""
+    counts = orders.sync(conn, user=user)
+    counts["ended"], counts["ended_error"] = [], None
+    try:
+        counts["ended"] = orders.sync_ended(conn, user)
+    except (ebay_api.EbayError, SystemExit) as e:
+        counts["ended_error"] = str(e)
+    return counts
+
+
 def data_checks(conn, limit=100):
     """Each check as (what, why, rows), rows limited to `limit`."""
     return [(what, why, conn.execute(sql + ("" if "ORDER BY" in sql else " ORDER BY 1") + " LIMIT ?", (limit,)).fetchall())
@@ -1331,10 +1343,14 @@ def _routes(app):
     @login_required
     def sync():
         try:
-            counts = orders.sync(g.conn, user=g.user["id"])
+            counts = sync_ebay(g.conn, g.user["id"])
             flash("%d orders checked, %d new sales." % (counts["orders"], counts["new_lines"]), "ok")
             for sku, before, after, title in counts["changes"]:
                 flash("%s: %s → %s  %s" % (sku, before, after, title), "ok")
+            for sku, title in counts["ended"]:
+                flash("%s: LISTED → ENDED (ended on eBay)  %s" % (sku, title), "ok")
+            if counts["ended_error"]:
+                flash("Couldn't check for ended listings: %s" % counts["ended_error"], "error")
         except (ebay_api.EbayError, SystemExit) as e:
             flash("Order sync failed: %s" % e, "error")
         return redirect(request.form.get("back") or url_for("picklist"))

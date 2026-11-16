@@ -55,9 +55,10 @@ of the whiteboard. Create drafts (`ebay/jobs.py`) is the one thing that spends C
 lister or admin starts it, at most 300 items a job. Tests fake the drafter (`JOBS_INLINE` runs jobs inline).
 
 Order sync (`orders.sync`, the "Get new orders from eBay" button) only reads orders: a new sale lowers the
-item's `quantity` (units still listed) and at 0 the item becomes BOUGHT. It never notices ended listings;
-the listing check (Checks page, `trading.active_listings` + `trading.compare`) does, and only a person
-confirming marks items ENDED. Every sync and listing check logs an event, which is where "last checked" comes from.
+item's `quantity` (units still listed) and at 0 the item becomes BOUGHT. After it, `orders.sync_ended` reads eBay's Unsold list
+and marks ENDED the LISTED items whose listing ended unsold (positive evidence only; a relist under the same SKU
+is left alone). Items merely missing from the live list are left for a person on the listing check (Checks page,
+`trading.active_listings` + `trading.compare`). Every sync and listing check logs an event, which is where "last checked" comes from.
 
 ## Unattended work (owner away, 2026-11-10)
 

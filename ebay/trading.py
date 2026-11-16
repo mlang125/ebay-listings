@@ -73,6 +73,48 @@ def active_listings():
     return out
 
 
+def parse_unsold(root):
+    """(listings, total pages) from one GetMyeBaySelling reply's UnsoldList: listings that ended without
+    selling out (ended by hand, or ran out of time). Each: id, sku, title."""
+    unsold = root.find(NS + "UnsoldList")
+    if unsold is None:
+        return [], 0
+    out = [{"listing_id": item.findtext(NS + "ItemID"), "sku": item.findtext(NS + "SKU"), "title": item.findtext(NS + "Title")}
+           for item in unsold.iter(NS + "Item")]
+    pages = int(unsold.findtext(NS + "PaginationResult/" + NS + "TotalNumberOfPages") or 1)
+    return out, pages
+
+
+def unsold_listings(days=60):
+    """Listings that ended unsold in the last `days` (eBay keeps 60), all pages. Read only."""
+    out, page, pages = [], 1, 1
+    while page <= pages:
+        root = _call("GetMyeBaySelling", "<ActiveList><Include>false</Include></ActiveList>"
+                     "<SoldList><Include>false</Include></SoldList>"
+                     "<UnsoldList><Include>true</Include><DurationInDays>%d</DurationInDays><Pagination>"
+                     "<EntriesPerPage>%d</EntriesPerPage><PageNumber>%d</PageNumber></Pagination></UnsoldList>"
+                     "<HideVariations>true</HideVariations>" % (days, PAGE_SIZE, page))
+        found, pages = parse_unsold(root)
+        out += found
+        page += 1
+    return out
+
+
+def ended_on_ebay(conn, unsold, active):
+    """Our LISTED items whose listing eBay says ended unsold. Only positive evidence counts: an item
+    that's merely missing from the live list is usually a sale not synced yet, so it's left for a person
+    (the listing check). Skipped too: anything with a live listing under the same SKU (relisted on eBay)."""
+    ended = {u["listing_id"]: u for u in unsold}
+    live_ids = {a["listing_id"] for a in active}
+    live_skus = {a["sku"] for a in active if a["sku"]}
+    rows = conn.execute(
+        "SELECT i.sku, i.title,"
+        " (SELECT listing_id FROM listings WHERE sku = i.sku ORDER BY listed_at DESC LIMIT 1) AS listing_id"
+        " FROM items i WHERE i.status = 'LISTED' ORDER BY i.sku"
+    ).fetchall()
+    return [r for r in rows if r["listing_id"] in ended and r["listing_id"] not in live_ids and r["sku"] not in live_skus]
+
+
 def compare(conn, active):
     """What differs between our LISTED items and eBay's live listings. Changes nothing.
 

@@ -25,12 +25,16 @@ shutil.copytree(os.path.join(ROOT, "batches", "batch1"), os.path.join(S, "batche
 from ebay import api, comps, db, drafter, drafts, listings, orders, sales, trading  # noqa: E402
 from web import create_app  # noqa: E402
 from werkzeug.datastructures import MultiDict  # noqa: E402
+import xml.etree.ElementTree as ET  # noqa: E402
 conn = db.connect(S + "/ebay.db"); db.set_password(conn, "matt", "testpass123"); db.add_user(conn, "sam", "lister"); db.set_password(conn, "sam", "testpass456"); conn.close()
 
 calls = []
 def fake_publish(conn, batch, skus, user=None, actor="cli", log=print):
     calls.append((skus, user, actor)); log("%s: published as listing 999 (fake)" % sorted(skus))
 listings.publish = fake_publish
+# eBay's Trading API is faked everywhere: nothing live, nothing ended (the ended check then changes nothing).
+trading.active_listings = lambda: [{"listing_id": "1", "sku": "x", "quantity": 1, "title": "x"}]
+trading.unsold_listings = lambda days=60: []
 comps.refresh_active = lambda conn, batch, skus, log=print, user=None, actor="cli": calls.append(("comps", skus, user))
 app = create_app(db_path=S + "/ebay.db", batches_dir=S + "/batches", inbox_dir=S + "/inbox")
 
@@ -493,8 +497,35 @@ synced = fresh().execute("select at, user_id, data from events where action = 's
 assert synced and synced[1] == 1 and json.loads(synced[2])["orders"] == 0, synced
 check(c.get("/"), has=["Last checked " + synced[0].replace("T", " ")[:16]])
 
+# --- order sync also ends items whose listing ended unsold on eBay (eBay faked) ---
+reply = ET.fromstring("""<GetMyeBaySellingResponse xmlns="urn:ebay:apis:eBLBaseComponents"><Ack>Success</Ack><UnsoldList>
+  <ItemArray><Item><ItemID>333</ItemID><SKU>MV-3</SKU><Title>C</Title></Item></ItemArray>
+  <PaginationResult><TotalNumberOfPages>2</TotalNumberOfPages></PaginationResult></UnsoldList></GetMyeBaySellingResponse>""")
+assert trading.parse_unsold(reply) == ([{"listing_id": "333", "sku": "MV-3", "title": "C"}], 2)
+assert trading.parse_unsold(ET.fromstring("<r/>")) == ([], 0)
+ended_rows = fresh().execute("select i.sku, (select listing_id from listings where sku = i.sku order by listed_at desc limit 1)"
+                             " from items i where i.status = 'LISTED' and exists (select 1 from listings where sku = i.sku)"
+                             " order by i.sku limit 3").fetchall()
+(end_sku, end_id), (relisted_sku, relisted_id), (missing_sku, missing_id) = ended_rows
+trading.unsold_listings = lambda days=60: [{"listing_id": end_id, "sku": end_sku, "title": "a"},
+                                           {"listing_id": relisted_id, "sku": relisted_sku, "title": "b"}]
+trading.active_listings = lambda: [{"listing_id": "777000", "sku": relisted_sku, "quantity": 1, "title": "b again"}]
+check(c.post("/sync", data={"csrf": tok, "back": "/"}, follow_redirects=True), has=[end_sku + ": LISTED → ENDED (ended on eBay)"])
+status_of = lambda sku: fresh().execute("select status from items where sku=?", (sku,)).fetchone()[0]
+assert status_of(end_sku) == "ENDED", "ended unsold on eBay"
+assert status_of(relisted_sku) == "LISTED", "relisted on eBay under the same SKU: still live"
+assert status_of(missing_sku) == "LISTED", "only missing from the live list: left for a person"
+ev = fresh().execute("select actor, user_id, data from events where entity_id = ? and action = 'status' order by id desc", (end_sku,)).fetchone()
+assert ev[0] == "sync" and ev[1] == 1 and json.loads(ev[2])["why"] == "ended on eBay", ev
+trading.active_listings = lambda: []
+check(c.post("/sync", data={"csrf": tok, "back": "/"}, follow_redirects=True),
+      has=["0 orders checked", "Couldn&#39;t check for ended listings"])
+with fresh() as conn:  # put it back for the checks below
+    db.set_status(conn, end_sku, "LISTED", "test")
+trading.active_listings = lambda: [{"listing_id": "1", "sku": "x", "quantity": 1, "title": "x"}]
+trading.unsold_listings = lambda days=60: []
+
 # --- listing check (eBay faked) ---
-import xml.etree.ElementTree as ET  # noqa: E402
 reply = ET.fromstring("""<GetMyeBaySellingResponse xmlns="urn:ebay:apis:eBLBaseComponents"><Ack>Success</Ack><ActiveList>
   <ItemArray><Item><ItemID>111</ItemID><SKU>MV-1</SKU><Title>A</Title><QuantityAvailable>2</QuantityAvailable></Item>
   <Item><ItemID>222</ItemID><Title>B</Title><Quantity>3</Quantity><SellingStatus><QuantitySold>1</QuantitySold></SellingStatus></Item></ItemArray>

@@ -21,7 +21,7 @@ from ebay import api as ebay_api, capture, config, db, drafts, jobs, listings, o
 from . import (CONDITIONS, ITEMS_SQL, ITEM_SORTS, LOCKOUT_MINUTES, MAX_FAILED_SIGN_INS, TITLE_MAX, TOTE_SORTS,
                USERS_SQL, _float, _item_filters, _parse_json, _password_mark, _sku, activity_rows, attention,
                change_user, count_tote, data_checks, draft_state, edit_changes, item_action, order_by, problems,
-               ship, sign_in_failures)
+               ship, sign_in_failures, sync_ebay)
 
 blueprint = Blueprint("api", __name__, url_prefix="/api/v1")
 
@@ -431,13 +431,15 @@ def _last_sync():
 @blueprint.route("/sync/orders", methods=["POST"])
 @token_required
 def sync_orders():
-    """Fetch new orders from eBay. New sales lower an item's units left; at 0 it's BOUGHT."""
+    """Fetch new orders from eBay. New sales lower an item's units left; at 0 it's BOUGHT. Then items
+    whose listing ended unsold on eBay become ENDED (`ended`; `ended_error` if that check failed)."""
     try:
-        counts = orders.sync(g.conn, user=g.user["id"])
+        counts = sync_ebay(g.conn, g.user["id"])
     except (ebay_api.EbayError, SystemExit) as e:
         return error(502, "Couldn't get orders from eBay: %s" % e, "ebay_error")
     return jsonify({"orders": counts["orders"], "new_sales": counts["new_lines"], "changes": [
-        {"sku": sku, "from": before, "to": after, "title": title} for sku, before, after, title in counts["changes"]]})
+        {"sku": sku, "from": before, "to": after, "title": title} for sku, before, after, title in counts["changes"]],
+        "ended": [{"sku": sku, "title": title} for sku, title in counts["ended"]], "ended_error": counts["ended_error"]})
 
 
 @blueprint.route("/sync/listings", methods=["POST"])

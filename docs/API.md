@@ -66,7 +66,7 @@ app should show its sign-in screen. Failed sign-ins count toward the same lockou
 |---|---|---|
 | GET | /picklist | Sold items waiting to ship, in tote order (`?days=0` = due today) -> `{"items", "total", "last_sync"}` |
 | POST | /pack | `{"skus": [...] or "sku", "step": "LABEL_PRINTED"/"PACKAGED"/"SENT_TO_POST_OFFICE"/"BOUGHT", "box": "..."}` Only items waiting to ship change -> `{"changed", "skipped"}` |
-| POST | /sync/orders | Fetch new orders from eBay (read only) -> `{"orders", "new_sales", "changes": [{"sku", "from", "to", "title"}]}` |
+| POST | /sync/orders | Fetch new orders from eBay (read only), then mark ENDED the listed items whose listing ended unsold on eBay -> `{"orders", "new_sales", "changes": [{"sku", "from", "to", "title"}], "ended": [{"sku", "title"}], "ended_error"}` (`ended_error` is null unless that second check failed) |
 | POST | /sync/listings | Compare live eBay listings (read only) -> `{"live", "listed", "not_live", "unknown", "quantity"}`. Changes nothing; end items with /items/bulk |
 | POST | /listings/quantities | `{"quantities": {"MV-00123": 2}}` Take eBay's units left for listed items, all or nothing |
 

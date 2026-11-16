@@ -11,7 +11,7 @@ import datetime
 import urllib.parse
 import zoneinfo
 
-from . import api, db
+from . import api, db, trading
 
 EBAY_TZ = zoneinfo.ZoneInfo("America/Los_Angeles")  # eBay dates its days in Pacific time
 
@@ -123,6 +123,25 @@ def sync(conn, days=90, user=None):
         db.log_event(conn, "orders", "sync", "synced", "sync", user, data={
             "days": days, "orders": counts["orders"], "new_lines": counts["new_lines"], "changes": len(counts["changes"])})
     return counts
+
+
+def sync_ended(conn, user=None):
+    """Mark ENDED every LISTED item whose eBay listing ended unsold (by hand or out of time). Reads eBay
+    only. Runs with every order sync, after it, so a sold item has already left LISTED. Returns
+    [(sku, title)] of the items it changed."""
+    active = trading.active_listings()
+    listed = conn.execute("SELECT COUNT(*) FROM items WHERE status = 'LISTED'").fetchone()[0]
+    if not active and listed > 1:
+        # eBay saying nothing is live is far more likely a bad reply than the truth: change nothing.
+        raise api.EbayError("Trading GetMyeBaySelling", "no live listings came back; ended listings not checked")
+    unsold = trading.unsold_listings()
+    ended = trading.ended_on_ebay(conn, unsold, active)
+    with conn:
+        for r in ended:
+            db.set_status(conn, r["sku"], "ENDED", "sync", user, data={"listing_id": r["listing_id"], "why": "ended on eBay"})
+        db.log_event(conn, "listings", "ended", "ended_check", "sync", user, data={
+            "live": len(active), "unsold": len(unsold), "ended": len(ended)})
+    return [(r["sku"], r["title"]) for r in ended]
 
 
 def pick_list(conn, within_days=None, today=None):
