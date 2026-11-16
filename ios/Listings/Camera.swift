@@ -24,10 +24,23 @@ final class Camera: NSObject, ObservableObject, AVCapturePhotoCaptureDelegate {
 
     func stop() { DispatchQueue.global(qos: .userInitiated).async { self.session.stopRunning() } }
 
+    private var device: AVCaptureDevice?
+
+    /// The multi-lens camera where there is one. On recent iPhones the main lens can't focus closer than
+    /// about 20 cm, so a small item shot up close stays blurry; the multi-lens camera switches to the
+    /// ultra-wide lens's macro mode by itself, like Apple's Camera app. Apps that open only the main lens
+    /// can't focus up close either.
+    private static func bestBackCamera() -> AVCaptureDevice? {
+        for type in [AVCaptureDevice.DeviceType.builtInTripleCamera, .builtInDualWideCamera, .builtInDualCamera, .builtInWideAngleCamera] {
+            if let d = AVCaptureDevice.default(type, for: .video, position: .back) { return d }
+        }
+        return nil
+    }
+
     private func configure() {
         session.beginConfiguration()
         session.sessionPreset = .photo
-        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
+        guard let device = Self.bestBackCamera(),
               let input = try? AVCaptureDeviceInput(device: device), session.canAddInput(input), session.canAddOutput(output) else {
             session.commitConfiguration()
             DispatchQueue.main.async { self.available = false }  // the simulator has no camera
@@ -35,8 +48,56 @@ final class Camera: NSObject, ObservableObject, AVCapturePhotoCaptureDelegate {
         }
         session.addInput(input)
         session.addOutput(output)
+        output.maxPhotoQualityPrioritization = .balanced
         session.commitConfiguration()
+        self.device = device
+        if (try? device.lockForConfiguration()) != nil {
+            if device.isVirtualDevice {
+                // Start at the main lens's view (1x), as the Camera app does; zoom factor 1 is the ultra-wide.
+                if let wide = device.virtualDeviceSwitchOverVideoZoomFactors.first {
+                    device.videoZoomFactor = CGFloat(truncating: wide)
+                }
+                device.setPrimaryConstituentDeviceSwitchingBehavior(.auto, restrictedSwitchingBehaviorConditions: [])
+            }
+            if device.isAutoFocusRangeRestrictionSupported { device.autoFocusRangeRestriction = .near }  // items are close
+            continuous(device)
+            device.isSubjectAreaChangeMonitoringEnabled = true
+            device.unlockForConfiguration()
+        }
+        NotificationCenter.default.addObserver(forName: AVCaptureDevice.subjectAreaDidChangeNotification, object: device,
+                                               queue: nil) { [weak self] _ in self?.refocus() }
         configured = true
+    }
+
+    private func continuous(_ device: AVCaptureDevice) {
+        if device.isFocusModeSupported(.continuousAutoFocus) { device.focusMode = .continuousAutoFocus }
+        if device.isExposureModeSupported(.continuousAutoExposure) { device.exposureMode = .continuousAutoExposure }
+    }
+
+    /// Tap to focus: focus and expose on that spot (0-1 device coordinates) until the scene changes.
+    func focus(at point: CGPoint) {
+        guard let device else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard (try? device.lockForConfiguration()) != nil else { return }
+            if device.isFocusPointOfInterestSupported && device.isFocusModeSupported(.autoFocus) {
+                device.focusPointOfInterest = point
+                device.focusMode = .autoFocus
+            }
+            if device.isExposurePointOfInterestSupported && device.isExposureModeSupported(.autoExpose) {
+                device.exposurePointOfInterest = point
+                device.exposureMode = .autoExpose
+            }
+            device.unlockForConfiguration()
+        }
+    }
+
+    /// The camera moved or the item changed after a tap: back to focusing on the middle by itself.
+    private func refocus() {
+        guard let device, (try? device.lockForConfiguration()) != nil else { return }
+        if device.isFocusPointOfInterestSupported { device.focusPointOfInterest = CGPoint(x: 0.5, y: 0.5) }
+        if device.isExposurePointOfInterestSupported { device.exposurePointOfInterest = CGPoint(x: 0.5, y: 0.5) }
+        continuous(device)
+        device.unlockForConfiguration()
     }
 
     /// Take a photo; the reply is a JPEG sized for listings, or nil if it failed.
@@ -67,15 +128,39 @@ func listingJPEG(_ data: Data) -> Data? {
 
 struct CameraPreview: UIViewRepresentable {
     let session: AVCaptureSession
+    var onTap: (CGPoint) -> Void = { _ in }
+
     final class PreviewView: UIView {
         override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
         var preview: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
+        var onTap: (CGPoint) -> Void = { _ in }
+        private let square = UIView(frame: CGRect(x: 0, y: 0, width: 80, height: 80))
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            square.layer.borderColor = UIColor.systemYellow.cgColor
+            square.layer.borderWidth = 2
+            square.alpha = 0
+            square.isUserInteractionEnabled = false
+            addSubview(square)
+            addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped)))
+        }
+        required init?(coder: NSCoder) { fatalError("not used") }
+
+        @objc private func tapped(_ tap: UITapGestureRecognizer) {
+            let at = tap.location(in: self)
+            onTap(preview.captureDevicePointConverted(fromLayerPoint: at))
+            square.center = at
+            square.alpha = 1
+            UIView.animate(withDuration: 0.3, delay: 0.7, options: []) { self.square.alpha = 0 }
+        }
     }
     func makeUIView(context: Context) -> PreviewView {
         let v = PreviewView()
         v.preview.session = session
         v.preview.videoGravity = .resizeAspectFill
+        v.onTap = onTap
         return v
     }
-    func updateUIView(_ uiView: PreviewView, context: Context) {}
+    func updateUIView(_ uiView: PreviewView, context: Context) { uiView.onTap = onTap }
 }

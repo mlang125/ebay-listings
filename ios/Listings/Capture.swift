@@ -162,7 +162,7 @@ struct ShootView: View {
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
-                if camera.available && !camera.denied { CameraPreview(session: camera.session) } else {
+                if camera.available && !camera.denied { CameraPreview(session: camera.session) { camera.focus(at: $0) } } else {
                     Color.black.overlay(Text(camera.denied ? "Camera access is off. Turn it on in Settings, or add photos from the library."
                                                            : "No camera here. Add photos from the library.")
                         .foregroundStyle(.white).multilineTextAlignment(.center).padding())
